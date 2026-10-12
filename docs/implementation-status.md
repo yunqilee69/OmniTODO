@@ -2,7 +2,9 @@
 
 本机无 GUI 环境，但**页面级冒烟已用虚拟显示（Xvfb）真实跑通**：启动打包好的应用、
 用合成点击/按键走完各页面，并核对点击确实写进了数据库（见「页面级冒烟」一节）。
-剩下未闭环的只有需要 Windows/macOS 机器与证书的部分。
+后续在一台有 Aqua 会话的 macOS 上又补做了**真实桌面冒烟**与 **macOS 打包**（见
+「真实桌面冒烟（macOS）」与 [`docs/packaging.md`](./packaging.md)）。剩下未闭环的
+只剩 Windows（MSI、真机运行）与签名、公证这类需要证书和对应平台的部分。
 
 ## 验证命令与结果
 
@@ -19,9 +21,12 @@
 | `scripts/smoke-deeplink-xvfb.sh` | **deep-link 真能用**：`omnitodo://task/<id>` 聚焦到指定任务（见下） |
 | `scripts/package-linux-docker.sh deb,appimage` | deb 11.1 MiB + AppImage 111.1 MiB 产出成功 |
 | `scripts/package-windows-cross.sh nsis` | NSIS 安装包 6.2 MiB 交叉构建成功（载荷已核对，未签名、未在 Windows 跑过） |
+| `scripts/package.sh dmg,app`（macOS 14 / arm64，Xcode 26.6） | `.app` 23.5 MiB + `.dmg` 9.0 MiB，**挂载后核对内容**（见下） |
+| 真实桌面冒烟（macOS Aqua 会话） | 应用真起窗口、页面渲染、灌库后刷新、`omnitodo://task/<id>` 聚焦任务（均真实截图确认，见下） |
 
-三个产物都重新构建过（不是复用上一轮的旧包）：改动后重跑 `tauri build`，再把新包
-装进容器、核对内容，最后跑一遍页面级冒烟。
+Linux/Windows 三个产物都重新构建过（不是复用上一轮的旧包）：改动后重跑 `tauri build`，
+再把新包装进容器、核对内容，最后跑一遍页面级冒烟。macOS 的 `.app`/`.dmg` 也是本轮从零
+构建（先删旧产物，再跑 `scripts/package.sh dmg,app`）。
 
 打包产物的验证（在容器内实测，非仅构建成功）：
 
@@ -74,17 +79,34 @@ scripts/smoke-gui-xvfb.sh --bin /usr/bin/omnitodo-desktop \
 5. **卡片确实被点掉了**：`12`/`13` 两张图右下角区域的灰度均值必须变化，
    证明那次点击落在了卡片按钮上而不是打在空处（避免"断言过了但界面没动"）。
 
+## 真实桌面冒烟（macOS）
+
+「真实桌面会话里的人工过一遍」一直记在待办里（原开发机是 Linux、无 GUI）。
+这次在一台有 Aqua 会话的 macOS（arm64，Xcode 26.6）上，用 `tauri build` 出的 `.app`
+直接跑真机验收，每步用 `screencapture` 抓**真实显示器**画面（不是 Xvfb）：
+
+| 项 | 怎么验的 | 结果 |
+|---|---|---|
+| 窗口真能起、页面不白 | `open OmniTODO.app`，抓窗口 | 侧栏（搜索框 / 六条入口 / 项目 / 标签计数）与 Inbox 空态正常渲染，中文无豆腐块 |
+| 数据真能显示 | 先用 CLI 往默认库（`~/Library/Application Support/OmniTODO/omnitodo.db`）灌 1 项目 + 3 任务（含重复规则与标签），再启动应用 | 侧栏出现「工作 2」「#汇报 1」「#设计 1」，Inbox 只列未归档的 `评审设计稿`（项目内任务不出现），优先级色块与截止文案正确 |
+| 详情面板 | 由 deep-link 打开指定任务 | 标题 / 已完成 / 优先级 / 开始 / 截止 / 全天 / 项目 / 描述(Markdown) / 重复 / 标签 / 附件 各控件齐全 |
+| deep-link 真能聚焦 | `open "omnitodo://task/<id>"` | 详情面板打开并聚焦到该任务；**进程数仍为 1**（`single-instance` 把第二个进程的 URL 转交给既有窗口） |
+
+macOS 上 `omnitodo://` 由 `Info.plist` 的 `CFBundleURLSchemes` 注册（与 Linux 的
+`.desktop` `x-scheme-handler` 方式不同），本次在真机确认可用 —— 即设计 §9/§11 要求的
+「点通知经 deep-link 聚焦任务」在第二个平台上的落地验证。仍建议在 Windows 真机再确认一次。
+
 ## 分期对照
 
 | 阶段 | 内容 | 状态 | 证据 |
 |---|---|---|---|
 | P0 | workspace 骨架、DB schema + 迁移、core CRUD、CLI 冒烟 | ✅ | `crates/omnitodo-core/migrations/0001_init.sql`；`tests/core_tests.rs`；CLI `init/project/task/status` 实跑通过 |
-| P1 | Tauri 壳 + React 列表/详情/CRUD | ✅ 代码 + 页面级冒烟 | `omnitodo-desktop/`（52 个 command）release 编译 + clippy 0 warning；Xvfb 冒烟实测窗口能起、各页面渲染正确、点击写库（见上节）；未在**真实显示器**上人工过一遍 |
+| P1 | Tauri 壳 + React 列表/详情/CRUD | ✅ 代码 + 页面级冒烟 + 真机 | `omnitodo-desktop/`（52 个 command）release 编译 + clippy 0 warning；Xvfb 冒烟实测窗口能起、各页面渲染正确、点击写库（见上节）；**已在 macOS 真实桌面会话补验**窗口渲染与数据刷新（见「真实桌面冒烟（macOS）」）；只剩托盘右键菜单、拖拽手势需真实桌面人工点击 |
 | P2 | 子任务、标签、附件（BLOB / 托管文件）、托盘 + 快捷添加 | ✅ 逻辑层 + 页面级 | 子任务深度/递归、标签合并改名、附件 blob/managed/GC 均有测试；**附件已通过真实 UI 走完列表→删除并断言软删除落库**（`14-attachments` / `15-attachment-deleted`，见上节断言 4）；**全局快捷键已用合成按键实测**（`scripts/smoke-shortcut-xvfb.sh`）；托盘右键菜单需真实桌面会话 |
 | P3 | 简写快速添加、提醒调度、重复规则、日历视图 | ✅ 逻辑层 + 页面级冒烟 | `quickadd` 表格用例、`recurrence` 展开/物化幂等、`reminder` 去重与稍后提醒、`calendar` 物化+虚拟期次合并均有测试；**到点弹系统通知已在虚拟显示下真实验证**（`scripts/smoke-notification-xvfb.sh`：dunst 收到带标题的通知、气泡像素比对、恰好一条），失败时降级为应用内提醒卡片；`04-calendar` 实测月视图与虚拟期次、`05/06-quickadd` 实测实时解析 |
 | P4 | 全文搜索（FTS5 trigram）、导入导出 | ✅ | FTS 中文子串 + <3 字符 LIKE 回退测试；三种导入源（Markdown / todo.txt / Todoist JSON）与 JSON/CSV/MD 导出均有测试，Todoist 导入还会按需建项目、还原子任务层级；`09-search` 实测端到端搜索与高亮，`Settings` 内一键导入导出 |
 | P5 | MCP：stdio + HTTP 同时可用、只读工具 + `summary_report` | ✅ | `tests/mcp_tests.rs` 含真实二进制 stdio 与 HTTP 端到端；只读实例写库被拒测试 |
-| P6 | MCP 写工具（受开关）+ 审计、打包分发 | ✅ Linux + Windows(NSIS) / ⚠️ macOS·MSI | 写工具开关 + `mcp_audit` 测试通过；Linux `deb`/`AppImage` 已构建、装包后跑通页面级冒烟；Windows NSIS 安装包在 Linux 上交叉构建产出并核对载荷（未签名、未在 Windows 运行）；MSI（需 WiX/Windows）、macOS 包与公证、Releases 上传需对应环境与证书 |
+| P6 | MCP 写工具（受开关）+ 审计、打包分发 | ✅ Linux + Windows(NSIS) + macOS(.app/.dmg) / ⚠️ MSI·签名公证 | 写工具开关 + `mcp_audit` 测试通过；Linux `deb`/`AppImage` 已构建、装包后跑通页面级冒烟；Windows NSIS 安装包在 Linux 上交叉构建产出并核对载荷（未签名、未在 Windows 运行）；**macOS `.app`(23.5 MiB)/`.dmg`(9.0 MiB) 已在 macOS 构建机产出、挂载核对并真机运行**（见打包文档）；MSI（需 WiX/Windows）、macOS 签名/公证、Releases 上传需对应环境与证书 |
 
 ## 与设计的两处实现偏差
 
@@ -197,22 +219,21 @@ scripts/smoke-gui-xvfb.sh --bin /usr/bin/omnitodo-desktop \
 
 ### A. 需要别的机器 / 证书（本机无法执行）
 
-- **macOS 安装包与公证**：`.dmg`/`.app` 需 macOS 构建机。本机没有 macOS，也没有 macOS
-  虚拟机（无 `/dev/kvm`）或远程构建机。更关键的是：**Xcode 与 macOS SDK 的下载本身就
-  要登录 Apple 开发者账号**（实测：下载请求 302 跳到 `idmsa.apple.com` 登录页），
-  公证还需要 Apple Developer 证书与 `notarytool`。这不是「还没试」，是缺凭据与平台，
-  本机无论如何做不出来。证据记录在 [`docs/packaging.md`](./packaging.md)。
+- **macOS 安装包**：✅ **已在 macOS 构建机上完成**（`.app` 23.5 MiB + `.dmg` 9.0 MiB，
+  `scripts/package.sh dmg,app`，挂载核对 + 真机运行，见 [`docs/packaging.md`](./packaging.md)）。
+  仍未做的是**签名与公证**：需 Apple Developer 证书（付费账号）与 `notarytool`；
+  未签名包在真机首开会被 Gatekeeper 拦，需右键→打开或去掉 quarantine 属性。
+  这不是「还没试」，是缺证书与账号。
 - **Windows MSI 与签名**：NSIS 已在 Linux 上交叉构建产出（`scripts/package-windows-cross.sh`）。
   MSI 试过交叉构建：装上 .NET 8 + WiX 5.0.2 后，`wix build` 能启动，但**任何
   `Directory/@Name` 写法都报 `WIX0389 ... is not a relative path`**，即 WiX 的路径校验
   在非 Windows 上不可用 —— 所以 `scripts/package-windows-cross.sh` 才会直接拒绝 `msi`
   参数（退出码 2）。签名还另需 Windows 主机或自定义 `sign_command`。
   交叉构建出的 NSIS 安装包**未在 Windows 上实际安装运行过**。
-- **真实桌面会话里的人工过一遍**：这需要一台有窗口管理器与真实显示器的机器。
-  其中能自动化的大部分已经在这里跑掉了（见下节，含 deep-link 本身），剩下的是需要人手
-  点击的部分：托盘右键菜单、拖拽手势（dnd-kit 的 pointer 事件序列）、autostart 写入开机项
-  后的重启验证。macOS/Windows 上 deep-link 的系统级注册与单实例转发也建议在真机再确认一次
-  ——Linux 路径已验证，但各平台协议注册方式不同。
+- **托盘右键菜单 / 拖拽手势**：需在有窗口管理器的真实桌面人工点击。应用窗口本身、
+  页面渲染与 deep-link 已在 macOS 真机验证（见上「真实桌面冒烟（macOS）」），
+  但托盘右键菜单与 dnd-kit 的 pointer 事件序列仍需人手过一遍；autostart 写入开机项后的
+  重启验证同样如此。Windows 上 deep-link 的系统级注册与单实例转发也建议在真机再确认一次。
 
 ### B. 本机做不了，但已把能验证的部分都验了
 

@@ -6,7 +6,7 @@ OmniTODO 桌面端用 Tauri 2 bundler 产出各平台安装包；`omnitodo-mcp` 
 ## 一条命令
 
 ```bash
-scripts/package.sh                 # 当前平台默认格式：deb,appimage,rpm
+scripts/package.sh                 # 当前平台默认：Linux → deb,appimage,rpm；macOS → dmg,app
 scripts/package.sh nsis,msi        # 在 Windows 构建机上
 scripts/package.sh dmg,app         # 在 macOS 构建机上
 
@@ -21,6 +21,12 @@ scripts/package-windows-cross.sh nsis   # 不想开 Windows 机器：在 Linux �
 3. `tauri build --bundles <...>` 产出安装包。
 
 产物位于 `omnitodo-desktop/target/release/bundle/<format>/`。
+
+macOS 上还多一步注意：`tauri build --bundles dmg` 结束时会调 `bundle_dmg.sh`，
+它用 AppleScript 让 Finder 排布图标，在**没有 Finder 自动化权限的构建机**上会以
+`AppleEvent 已超时 (-1712)` 失败。Tauri 只在 `CI` 环境变量存在时会加 `--skip-jenkins`
+跳过这一步，所以 `scripts/package.sh` 在 macOS 上默认导出 `CI=true`，`.dmg` 照常产出
+（仅少了自定义图标排布）；想要漂亮布局的真实桌面会话设 `OMNITODO_PRETTY_DMG=1` 即可。
 
 ## Windows 安装包（在 Linux 上交叉构建）
 
@@ -88,6 +94,26 @@ docker exec -w /work/omnitodo-desktop omnitodo-build bash -lc '
 
 本机（Debian 13 / trixie）就是用这条路径验证的，见文末「已在本机验证」。
 
+## macOS 安装包（.app / .dmg）
+
+macOS 产物**必须在 macOS 上构建**（`codesign` / `hdiutil` / WebKit 都是系统自带的），
+`tauri build --bundles dmg,app` 即可，无需额外工具链：
+
+```bash
+scripts/package.sh dmg,app          # 已在 macOS 14 (arm64, Xcode 26) 上验证
+```
+
+产物：`OmniTODO.app`（23.5 MiB）与 `OmniTODO_0.1.0_aarch64.dmg`（9.0 MiB）。
+未签名（没有 Developer ID 证书），首次打开需右键→打开或 `xattr -dr com.apple.quarantine`；
+上架/免 Gatekeeper 拦截还需 Apple 开发者证书做签名 + 公证（`notarytool`），见「尚未完成」。
+
+`.dmg` 的最后一步是 `bundle_dmg.sh` 用 AppleScript 调 Finder 排布图标。构建机若没有
+Finder 自动化权限（无人值守的 CI / 自动化会话），这一步会以
+`AppleEvent 已超时 (-1712)` 失败并使整个 `tauri build` 退出 64。Tauri 只在检测到 `CI`
+环境变量时才给 `bundle_dmg.sh` 传 `--skip-jenkins`；`scripts/package.sh` 因此在 macOS 上
+默认 `export CI=true`，跳过的只是 Finder 图标布局，`.dmg` 本身照常产出且可用。
+真实桌面会话想要漂亮布局：`OMNITODO_PRETTY_DMG=1 scripts/package.sh dmg,app`。
+
 ## 侧车（sidecar）机制
 
 - `tauri.conf.json` → `bundle.externalBin = ["binaries/omnitodo-mcp"]`；
@@ -139,6 +165,11 @@ Tauri CLI 2.12.2）产出：
 
 - `artifacts/OmniTODO_0.1.0_x64-setup.exe`（6.2 MiB）
 
+`scripts/package.sh dmg,app`（macOS 14 / arm64，Xcode 26.6，Rust 1.95）产出：
+
+- `OmniTODO.app`（23.5 MiB）
+- `OmniTODO_0.1.0_aarch64.dmg`（9.0 MiB）
+
 不只看「构建成功」，而是把包打开验证过：
 
 | 检查 | 结果 |
@@ -154,6 +185,11 @@ Tauri CLI 2.12.2）产出：
 | Windows 包的类型 | `file` 识别为 `PE32 ... Nullsoft Installer self-extracting archive` |
 | Windows 包的载荷 | `7z l` 列出 `omnitodo-desktop.exe`（18.8 MB 解压后）与 `omnitodo-mcp.exe`（侧车）——侧车确实随包分发 |
 | Windows 侧车本体 | 交叉编译出的 `omnitodo-mcp.exe` 为 `PE32+ ... x86-64`（含 bundled SQLite 的 C 编译） |
+| macOS `.app` 结构 | `Contents/MacOS/{omnitodo-desktop,omnitodo-mcp}`、`Contents/Resources/icon.icns`、`Contents/Info.plist` |
+| macOS 侧车随包 | `.app` 内 `omnitodo-mcp --version` → `omnitodo-mcp 0.1.0`；`mcp_cmds` 按「主程序同目录」定位，正好命中 `Contents/MacOS/omnitodo-mcp` |
+| macOS deep-link 注册 | `Info.plist` `CFBundleURLSchemes = omnitodo`；实时 `open omnitodo://task/<id>` 聚焦到该任务，且进程数不变（`single-instance` 转发生效） |
+| macOS `.dmg` 内容 | `hdiutil attach` 挂载为 `/Volumes/OmniTODO`，内含 `OmniTODO.app` + `Applications` 软链 + `.VolumeIcon.icns`；从挂载点运行侧车 `--version` 正常 |
+| 前端确实打进去了（macOS） | `.app` 主二进制内含 `assets/index-<hash>.js` 四个键，与 `ui/dist/assets/` 文件名逐一对得上 |
 
 ### 装完跑一遍页面级冒烟
 
@@ -202,10 +238,12 @@ scripts/smoke-deeplink-xvfb.sh --bin /usr/bin/omnitodo-desktop \
 `x-scheme-handler/omnitodo` 注册的，只跑 `cargo build` 出来的二进制不会被系统识别；
 脚本自己会检查这一项。
 
-未验证的部分：GUI 窗口本身（本机无显示会话）、托盘右键菜单等需要窗口管理器的手工交互，
-以及 Windows/macOS 产物。系统通知气泡已由 `smoke-notification-xvfb.sh` 在装了 dunst 的
-虚拟屏上验证过；deep-link 在 Linux 上验证过，macOS/Windows 的协议注册方式不同，
-建议真机再确认一次。
+未验证的部分：Windows 产物（已交叉构建但无法在本机运行验证）、以及托盘右键菜单等
+需要窗口管理器的手工交互。GUI 窗口本身已在 macOS 真实桌面会话上实测（应用启动、
+各页面渲染、灌入数据后刷新、`omnitodo://` deep-link 聚焦任务，均在真实显示器上截图确认）；
+系统通知气泡已由 `smoke-notification-xvfb.sh` 在装了 dunst 的虚拟屏上验证过；
+deep-link 在 Linux（虚拟屏）与 macOS（真实桌面）上都验证过，Windows 的协议注册方式不同，
+建议在 Windows 真机再确认一次。
 
 ## 尚未完成（需平台证书 / 环境，非本机可验证）
 
@@ -215,10 +253,10 @@ scripts/smoke-deeplink-xvfb.sh --bin /usr/bin/omnitodo-desktop \
 | --- | --- | --- |
 | Windows MSI | **WiX 5 拒绝在非 Windows 上构建**（实测，见下） | 装上 .NET 8 + `wix` 5.0.2 试过 |
 | Windows 代码签名 | 需 Windows 主机或自定义 `sign_command`；未签名的安装包会有 SmartScreen 提示 | 无证书，无法 |
-| macOS `.dmg`/`.app` | 需 macOS 构建机（Xcode 工具链 + `codesign`） | 本机无 macOS、无 macOS 虚拟机（无 `/dev/kvm`）、无远程构建机 |
-| macOS 公证（notarization） | 需 Apple Developer 证书 + `notarytool` | **Xcode 与 SDK 的下载本身就要登录 Apple 开发者账号**（实测：下载请求 302 跳转到 `idmsa.apple.com` 登录页），无凭据连工具链都拿不到 |
+| macOS `.app`/`.dmg` | — | **已在 macOS 构建机完成**（见上「macOS 安装包」与「已在本机验证」），无需证书即可产出未签名包 |
+| macOS 签名 / 公证（notarization） | 需 Apple Developer 证书（付费账号）+ `notarytool` | 无证书与账号，本机无法完成；未签名包在真机首开会被 Gatekeeper 拦，需右键→打开或去掉 quarantine 属性 |
 | GitHub Releases 上传 | 需先推送仓库 | 按约定「先本地，暂不推送」，本轮不做 |
-| 托盘右键菜单、拖拽手势、deep-link 运行时 | 需带窗口管理器的桌面会话 | 无 WM；全局快捷键已单独验证（见下节） |
+| 托盘右键菜单、拖拽手势 | 需窗口管理器的人工点击 | 应用窗口、页面渲染与 deep-link 运行已在 macOS 真机验证（见上）；托盘菜单与 dnd 拖拽仍待人工 |
 
 ### 为什么 MSI 不能在 Linux 上交叉构建（实测记录）
 

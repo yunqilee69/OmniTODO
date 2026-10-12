@@ -59,13 +59,16 @@ npx tauri dev        # 需要已构建的 ui
 ## 打包安装包
 
 ```bash
-scripts/package.sh                     # 本平台（如 Linux: deb/appimage/rpm）
+scripts/package.sh                     # 本平台默认：Linux deb/appimage/rpm；macOS dmg/app
 scripts/package-linux-docker.sh        # 无 GUI / 无 root 的 Linux 机器用容器构建
 scripts/package-windows-cross.sh nsis  # 在 Linux 上交叉构建 Windows 安装包（未签名）
 ```
 
 `omnitodo-mcp` 作为侧车打进安装包（`bundle.externalBin`），用户无需单独下载。
 图标由 `scripts/gen-icon.mjs` 生成源图后用 `tauri icon` 派生全套。
+macOS 产物（`.app` / `.dmg`）已在 macOS 构建机上实测；在无 Finder 自动化权限的
+机器上，脚本会自带 `CI=true` 跳过 `bundle_dmg.sh` 的 Finder 布局步骤（`.dmg` 照常产出，
+只是少了自定义图标排布），桌面会话里想要漂亮布局可设 `OMNITODO_PRETTY_DMG=1`。
 细节（含代理、依赖声明、已验证结论）见
 [`docs/packaging.md`](./docs/packaging.md)。
 
