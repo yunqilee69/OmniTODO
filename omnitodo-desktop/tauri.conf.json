@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OmniTODO",
+  "version": "0.1.0",
+  "identifier": "com.omnitodo.desktop",
+  "build": {
+    "frontendDist": "../ui/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm --prefix ../ui run dev",
+    "beforeBuildCommand": "npm --prefix ../ui run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OmniTODO",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 720,
+        "minHeight": 480
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis", "dmg", "app", "deb", "rpm", "appimage"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": ["binaries/omnitodo-mcp"],
+    "resources": [],
+    "category": "Productivity",
+    "publisher": "OmniTODO",
+    "copyright": "Copyright © 2026 OmniTODO",
+    "shortDescription": "Local-first task manager",
+    "longDescription": "OmniTODO is a local-first task manager with projects, tags, subtasks, recurring tasks, reminders, attachments and an MCP server so AI assistants can read and (optionally) write your tasks.",
+    "linux": {
+      "deb": {
+        "section": "utils"
+      }
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": { "schemes": ["omnitodo"] }
+    }
+  }
+}

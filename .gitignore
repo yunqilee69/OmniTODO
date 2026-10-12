@@ -1,0 +1,32 @@
+# Rust / Cargo
+/target
+**/target/
+
+# Node / Vite (ui/)
+node_modules/
+ui/dist/
+ui/.vite/
+
+# Tauri 侧车二进制（由 scripts/build-sidecar.mjs 生成）与生成的 schema
+omnitodo-desktop/binaries/
+omnitodo-desktop/gen/schemas/
+
+# 打包产物
+artifacts/
+
+# 运行时数据（SQLite 单文件及其 WAL 伴生文件不应入库）
+*.db
+*.db-wal
+*.db-shm
+.omnitodo/
+
+# 环境与本地配置
+.env
+.env.local
+config.json
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
+*.swp

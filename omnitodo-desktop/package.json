@@ -1,0 +1,16 @@
+{
+  "name": "omnitodo-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Tauri 2 shell for OmniTODO (bundling + sidecar wiring, design §15/§16 P6)",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "icons": "tauri icon icons/source.png",
+    "sidecar": "node ../scripts/build-sidecar.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

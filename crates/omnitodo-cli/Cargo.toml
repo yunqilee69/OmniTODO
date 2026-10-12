@@ -1,0 +1,16 @@
+[package]
+name = "omnitodo-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "omnitodo"
+path = "src/main.rs"
+
+[dependencies]
+omnitodo-core = { path = "../omnitodo-core" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }

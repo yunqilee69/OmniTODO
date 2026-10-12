@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/omnitodo-core",
+    "crates/omnitodo-cli",
+    "crates/omnitodo-mcp",
+]
+# The Tauri desktop shell needs WebView system libraries and is built separately
+# (`cargo tauri dev` / `cargo tauri build`); it is kept out of the default
+# workspace so `cargo test --workspace` runs headless (design §6).
+exclude = ["omnitodo-desktop"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+uuid = { version = "1", features = ["v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "sqlite",
+    "migrate",
+    "macros",
+    "json",
+    "chrono",
+    "uuid",
+] }
