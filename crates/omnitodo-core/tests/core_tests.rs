@@ -276,6 +276,26 @@ async fn subtasks_depth_and_listing() {
     let subs = core.list_subtasks(&root.id).await.unwrap();
     assert_eq!(subs.len(), 2);
 
+    // `has_subtasks` flags exactly the tasks with a child, so the list knows
+    // which rows get an expand affordance.
+    assert!(core.get_task(&root.id).await.unwrap().has_subtasks);
+    assert!(core.get_task(&child.id).await.unwrap().has_subtasks);
+    assert!(!core.get_task(&grand.id).await.unwrap().has_subtasks);
+    // Same flag through the list path...
+    let listed = core
+        .list_tasks(&TaskFilter {
+            root_only: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(listed.items[0].has_subtasks);
+    // ...and the subtree path (child has a child, grand is a leaf).
+    let by_id: std::collections::HashMap<_, _> =
+        subs.iter().map(|s| (s.id.clone(), s.has_subtasks)).collect();
+    assert!(by_id[&child.id]);
+    assert!(!by_id[&grand.id]);
+
     // root_only filter excludes descendants.
     let page = core
         .list_tasks(&TaskFilter {

@@ -1,5 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { Button, Input, Tag } from "antd";
+import { CheckOutlined, PlusOutlined } from "@ant-design/icons";
+import { useRef, useState } from "react";
 import { api, type TaskDto, type TaskPatch } from "../api/client";
 import { qk } from "../api/queryKeys";
 
@@ -7,7 +9,9 @@ import { qk } from "../api/queryKeys";
  * Tag selector for the detail panel (design §13.2).
  *
  * `task_update` replaces the whole tag set, so this always sends the complete
- * selection; the backend creates any missing tag by name.
+ * selection; the backend creates any missing tag by name. New tags are added
+ * inline: the "+" sits after the existing tags and opens a narrow input that
+ * commits on Enter or on leaving the field.
  */
 export default function TagPicker({
   task,
@@ -18,7 +22,10 @@ export default function TagPicker({
 }) {
   const qc = useQueryClient();
   const { data: tags } = useQuery({ queryKey: qk.tags, queryFn: () => api.tagList() });
+  const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
+  // Guards against onPressEnter and the following blur both committing.
+  const doneRef = useRef(false);
 
   const selected = new Set(task.tags);
   const toggle = (name: string) => {
@@ -28,12 +35,23 @@ export default function TagPicker({
     onPatch({ tag_names: [...next] });
   };
 
-  const addByName = async () => {
-    const name = draft.trim().replace(/^#/, "");
-    if (!name) return;
-    await api.tagCreate(name);
-    onPatch({ tag_names: [...selected, name] });
+  const openInput = () => {
+    doneRef.current = false;
+    setAdding(true);
+  };
+
+  const closeInput = () => {
+    doneRef.current = true;
+    setAdding(false);
     setDraft("");
+  };
+
+  const commitDraft = () => {
+    if (doneRef.current) return;
+    const name = draft.trim().replace(/^#/, "");
+    closeInput();
+    if (!name || selected.has(name)) return;
+    onPatch({ tag_names: [...selected, name] });
     qc.invalidateQueries({ queryKey: qk.tags });
   };
 
@@ -43,46 +61,50 @@ export default function TagPicker({
   const all = [...(tags ?? []).map((t) => t.name), ...extra];
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap gap-1">
-        {all.length === 0 && <span className="text-xs text-neutral-400">还没有标签</span>}
-        {all.map((name) => (
-          <button
+    <div className="flex flex-wrap items-center gap-1.5">
+      {all.length === 0 && !adding && <span className="text-xs opacity-60">还没有标签</span>}
+      {all.map((name) => {
+        const on = selected.has(name);
+        return (
+          <Tag
             key={name}
-            type="button"
             onClick={() => toggle(name)}
-            className={`rounded px-2 py-0.5 text-xs ${
-              selected.has(name)
-                ? "bg-neutral-900 text-white"
-                : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
-            }`}
-            aria-pressed={selected.has(name)}
+            className="cursor-pointer select-none"
+            style={
+              on
+                ? { background: "var(--accent-soft)", color: "var(--accent-ink)", border: "none" }
+                : { opacity: 0.85 }
+            }
           >
-            #{name}
-          </button>
-        ))}
-      </div>
-      <div className="flex gap-1">
-        <input
-          className="min-w-0 flex-1 rounded border border-neutral-300 px-2 py-1 text-xs"
-          placeholder="新建标签…"
+            {on && <CheckOutlined className="mr-1" />}
+            {name}
+          </Tag>
+        );
+      })}
+      {adding ? (
+        <Input
+          size="small"
+          autoFocus
+          className="w-[110px]"
+          placeholder="新标签"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
+          onPressEnter={commitDraft}
+          onBlur={commitDraft}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void addByName();
-            }
+            if (e.key === "Escape") closeInput();
           }}
         />
-        <button
-          type="button"
-          className="rounded border border-neutral-300 px-2 py-1 text-xs"
-          onClick={() => void addByName()}
-        >
-          添加
-        </button>
-      </div>
+      ) : (
+        <Button
+          type="text"
+          size="small"
+          aria-label="新建标签"
+          className="!h-6 !px-1.5 opacity-70"
+          icon={<PlusOutlined />}
+          onClick={openInput}
+        />
+      )}
     </div>
   );
 }

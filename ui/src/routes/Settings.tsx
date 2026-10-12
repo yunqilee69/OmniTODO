@@ -1,7 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  App as AntApp,
+  Button,
+  Card,
+  Flex,
+  Input,
+  Segmented,
+  Select,
+  Space,
+  Switch,
+  Tag,
+  Typography,
+  Upload,
+} from "antd";
+import {
+  CopyOutlined,
+  DownloadOutlined,
+  ExportOutlined,
+  UploadOutlined,
+} from "@ant-design/icons";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, type ExportFormat, type ImportFormat, type TaskFilter } from "../api/client";
 import { qk } from "../api/queryKeys";
+import PageHeader from "../components/PageHeader";
+import { persistTheme } from "../lib/theme";
 import { useUiStore, type Theme } from "../stores/ui";
 
 /** Settings (design §13.1): general, reminders/autostart, the MCP panel, data
@@ -9,13 +32,17 @@ import { useUiStore, type Theme } from "../stores/ui";
  *  Rust side uses, so MCP and the CLI see identical state. */
 export default function Settings() {
   return (
-    <section className="max-w-3xl space-y-6">
-      <h1 className="text-xl font-semibold">设置</h1>
-      <General />
-      <Reminders />
-      <McpPanel />
-      <DataPanel />
-      <About />
+    <section className="flex h-full min-h-0 flex-col">
+      <PageHeader title="设置" />
+      <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
+        <Flex vertical gap={16} style={{ maxWidth: 760 }}>
+          <General />
+          <Reminders />
+          <McpPanel />
+          <DataPanel />
+          <About />
+        </Flex>
+      </div>
     </section>
   );
 }
@@ -37,7 +64,7 @@ function useSetting<T>(key: string, fallback: T) {
       qc.invalidateQueries({ queryKey: qk.mcp("httpState") });
     },
   });
-  return { value: query.data ?? fallback, loaded: query.isSuccess, set: set.mutate };
+  return { value: query.data ?? fallback, set: set.mutate };
 }
 
 function General() {
@@ -47,52 +74,49 @@ function General() {
   const { value: weekStart, set: setWeekStart } = useSetting<number>("ui.week_start", 1);
   const { data: projects } = useQuery({ queryKey: qk.projects, queryFn: () => api.projectList() });
 
-  // Paint the chosen theme on <html> so Tailwind's dark variants can react.
-  useEffect(() => {
-    const root = document.documentElement;
-    root.classList.toggle("dark", theme === "dark");
-    root.dataset.theme = theme;
-  }, [theme]);
+  const chooseTheme = (next: Theme) => {
+    setTheme(next);
+    void persistTheme(next);
+  };
 
   return (
     <Card title="通用">
-      <Row label="主题">
-        <select
-          className={selectClass}
-          value={theme}
-          onChange={(e) => setTheme(e.target.value as Theme)}
-        >
-          <option value="system">跟随系统</option>
-          <option value="light">浅色</option>
-          <option value="dark">深色</option>
-        </select>
-      </Row>
-      <Row label="默认项目">
-        <select
-          className={selectClass}
-          value={defaultProject}
-          onChange={(e) => setDefaultProject(e.target.value)}
-        >
-          <option value="">收件箱（不指定）</option>
-          {(projects ?? []).map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <p className="mt-1 text-xs text-neutral-500">快捷添加未写 `#项目` 时的归属。</p>
-      </Row>
-      <Row label="周起始日">
-        <select
-          className={selectClass}
-          value={weekStart}
-          onChange={(e) => setWeekStart(Number(e.target.value))}
-        >
-          <option value={1}>周一</option>
-          <option value={0}>周日</option>
-          <option value={6}>周六</option>
-        </select>
-      </Row>
+      <Flex vertical gap={16}>
+        <Row label="主题">
+          <Segmented
+            value={theme}
+            onChange={(v) => chooseTheme(v as Theme)}
+            options={[
+              { label: "跟随系统", value: "system" },
+              { label: "浅色", value: "light" },
+              { label: "深色", value: "dark" },
+            ]}
+          />
+        </Row>
+        <Row label="默认项目" hint="快捷添加未写 `#项目` 时的归属。">
+          <Select
+            style={{ maxWidth: 280 }}
+            value={defaultProject}
+            onChange={(v) => setDefaultProject(v)}
+            options={[
+              { value: "", label: "收件箱（不指定）" },
+              ...(projects ?? []).map((p) => ({ value: p.id, label: p.name })),
+            ]}
+          />
+        </Row>
+        <Row label="周起始日">
+          <Select
+            style={{ maxWidth: 280 }}
+            value={weekStart}
+            onChange={(v) => setWeekStart(v)}
+            options={[
+              { value: 1, label: "周一" },
+              { value: 0, label: "周日" },
+              { value: 6, label: "周六" },
+            ]}
+          />
+        </Row>
+      </Flex>
     </Card>
   );
 }
@@ -122,74 +146,73 @@ function Reminders() {
     }
   };
 
-  const toggleAutostart = async () => {
+  const toggleAutostart = async (next: boolean) => {
     try {
       const m = await import("@tauri-apps/plugin-autostart");
-      if (autostart) {
-        await m.disable();
-        setAutostart(false);
-      } else {
-        await m.enable();
-        setAutostart(true);
-      }
+      if (next) await m.enable();
+      else await m.disable();
+      setAutostart(next);
     } catch {
       setNote("当前环境不支持自启动设置");
     }
   };
 
+  const permissionLabel =
+    permission === "granted"
+      ? "已授权"
+      : permission === "denied"
+        ? "未授权"
+        : permission === "unavailable"
+          ? "当前环境不可用（浏览器预览）"
+          : "检测中…";
+
   return (
     <Card title="提醒与自启动">
-      <Row label="启用提醒">
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          <span className="text-neutral-500">
-            到点后弹出系统通知；重启后补发过去 24 小时的漏提醒为一条汇总。
-            关闭只停通知与提醒卡片，重复任务仍会按期落库用于统计。
-          </span>
-        </label>
-      </Row>
-      <Row label="通知权限">
-        <span className="text-sm text-neutral-600">
-          {permission === "granted"
-            ? "已授权"
-            : permission === "denied"
-              ? "未授权"
-              : permission === "unavailable"
-                ? "当前环境不可用（浏览器预览）"
-                : "检测中…"}
-        </span>
-        {permission !== "granted" && permission !== "unavailable" && (
-          <button className={btnClass} onClick={requestPermission}>
-            请求授权
-          </button>
-        )}
-      </Row>
-      <Row label="开机自启动">
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={autostart ?? false}
-            disabled={autostart === null}
-            onChange={toggleAutostart}
-          />
-          <span className="text-neutral-500">
-            {autostart === null ? "当前环境不可用" : "登录后后台常驻，保证提醒不丢"}
-          </span>
-        </label>
-      </Row>
-      {note && <p className="text-xs text-amber-600">{note}</p>}
+      <Flex vertical gap={16}>
+        <Row label="启用提醒">
+          <Space direction="vertical" size={2}>
+            <Switch checked={enabled} onChange={(v) => setEnabled(v)} />
+            <Typography.Text type="secondary" className="text-[11px]">
+              到点后弹出系统通知；重启后补发过去 24 小时的漏提醒为一条汇总。关闭只停通知与提醒卡片，重复任务仍会按期落库用于统计。
+            </Typography.Text>
+          </Space>
+        </Row>
+        <Row label="通知权限">
+          <Space>
+            <Typography.Text>{permissionLabel}</Typography.Text>
+            {permission !== "granted" && permission !== "unavailable" && (
+              <Button size="small" onClick={requestPermission}>
+                请求授权
+              </Button>
+            )}
+          </Space>
+        </Row>
+        <Row label="开机自启动">
+          <Space direction="vertical" size={2}>
+            <Switch
+              checked={autostart ?? false}
+              disabled={autostart === null}
+              onChange={(v) => void toggleAutostart(v)}
+            />
+            <Typography.Text type="secondary" className="text-[11px]">
+              {autostart === null ? "当前环境不可用" : "登录后后台常驻，保证提醒不丢"}
+            </Typography.Text>
+          </Space>
+        </Row>
+        {note && <Alert type="warning" showIcon message={note} />}
+      </Flex>
     </Card>
   );
 }
 
 function McpPanel() {
   const qc = useQueryClient();
+  const { message } = AntApp.useApp();
   const { data } = useQuery({
     queryKey: qk.mcp("httpState"),
     queryFn: () => api.mcpStatus(),
   });
   const [port, setPort] = useState("");
-  const [copied, setCopied] = useState<string | null>(null);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: qk.mcp("httpState") });
@@ -207,7 +230,7 @@ function McpPanel() {
 
   const copy = async (label: string, text: string) => {
     await navigator.clipboard.writeText(text);
-    setCopied(label);
+    message.success(`已复制：${label}`);
   };
   const copyClientConfig = async () => copy("客户端配置", await api.mcpCopyClientConfig());
   const copyControl = async () => {
@@ -222,89 +245,80 @@ function McpPanel() {
 
   return (
     <Card title="MCP 集成">
-      <div className="rounded border border-neutral-200 p-3">
-        <header className="mb-1 flex items-center gap-2">
-          <h3 className="text-sm font-medium">stdio</h3>
-          <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] text-green-700">
-            始终可用
-          </span>
-        </header>
-        <p className="text-xs text-neutral-600">
-          每个客户端各自拉起一个实例，无需开关；无需端口与 token。
-        </p>
-        <p className="mt-1 break-all font-mono text-xs text-neutral-500">
-          {data?.stdio.bin_path ?? "…"}
-        </p>
-        <button className={btnClass} onClick={copyClientConfig}>
-          复制客户端配置
-        </button>
-      </div>
-
-      <div className="mt-3 rounded border border-neutral-200 p-3">
-        <header className="mb-1 flex items-center gap-2">
-          <h3 className="text-sm font-medium">HTTP</h3>
-          <span
-            className={`size-2.5 rounded-full ${running ? "bg-green-500" : "bg-neutral-300"}`}
-            title={running ? "运行中" : "已停止"}
-          />
-          <span className="text-xs text-neutral-600">
-            {running ? `运行中 · 127.0.0.1:${data?.http.port}` : "已停止"}
-          </span>
-        </header>
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            className="w-28 rounded border border-neutral-300 px-2 py-1 text-sm"
-            placeholder="端口（可选）"
-            value={port}
-            onChange={(e) => setPort(e.target.value.replace(/\D/g, ""))}
-            disabled={running}
-          />
-          <button className={btnClass} disabled={running} onClick={() => start.mutate()}>
-            启用
-          </button>
-          <button
-            className="rounded border border-neutral-300 px-3 py-1 text-sm"
-            disabled={!running}
-            onClick={() => stop.mutate()}
-          >
-            停止
-          </button>
-          <button className={btnClass} onClick={copyControl}>
-            复制控制端点
-          </button>
+      <Flex vertical gap={12}>
+        <div className="rounded-md border border-[var(--border-hairline)] p-3">
+          <Space align="center" className="mb-1">
+            <Typography.Text strong>stdio</Typography.Text>
+            <Tag color="success" style={{ marginInlineEnd: 0 }}>
+              始终可用
+            </Tag>
+          </Space>
+          <Typography.Paragraph type="secondary" className="text-xs">
+            每个客户端各自拉起一个实例，无需开关；无需端口与 token。
+          </Typography.Paragraph>
+          <Typography.Text code className="break-all text-[11px]">
+            {data?.stdio.bin_path ?? "…"}
+          </Typography.Text>
+          <div className="mt-2">
+            <Button size="small" icon={<CopyOutlined />} onClick={copyClientConfig}>
+              复制客户端配置
+            </Button>
+          </div>
         </div>
-        <p className="mt-1 break-all font-mono text-xs text-neutral-500">
-          token: {data?.http.token || "（未启动）"}
-        </p>
-      </div>
 
-      <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3">
-        <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={data?.write_enabled ?? false}
-            onChange={(e) => toggleWrite.mutate(e.target.checked)}
-          />
-          <span>
-            <span className="font-medium">允许 MCP 写入</span>
-            <span className="block text-xs text-neutral-600">
-              开启后 AI 客户端可创建/修改/删除任务与项目；所有写入都会记录到 `op_log`，
-              可在数据库 `.omnitodo/omnitodo.db` 审计。关闭时 MCP 为只读。
-            </span>
-          </span>
-        </label>
-      </div>
+        <div className="rounded-md border border-[var(--border-hairline)] p-3">
+          <Space align="center" className="mb-1">
+            <Typography.Text strong>HTTP</Typography.Text>
+            <Tag color={running ? "success" : "default"} style={{ marginInlineEnd: 0 }}>
+              {running ? `运行中 · 127.0.0.1:${data?.http.port}` : "已停止"}
+            </Tag>
+          </Space>
+          <Space wrap>
+            <Input
+              size="small"
+              style={{ width: 120 }}
+              placeholder="端口（可选）"
+              value={port}
+              disabled={running}
+              onChange={(e) => setPort(e.target.value.replace(/\D/g, ""))}
+            />
+            <Button type="primary" size="small" disabled={running} onClick={() => start.mutate()}>
+              启用
+            </Button>
+            <Button size="small" disabled={!running} onClick={() => stop.mutate()}>
+              停止
+            </Button>
+            <Button size="small" type="text" icon={<CopyOutlined />} onClick={copyControl}>
+              复制控制端点
+            </Button>
+          </Space>
+          <Typography.Text code className="mt-2 block break-all text-[11px]">
+            token: {data?.http.token || "（未启动）"}
+          </Typography.Text>
+        </div>
 
-      {copied && <p className="text-xs text-green-700">已复制：{copied}</p>}
+        <Space direction="vertical" size={2}>
+          <Space>
+            <Switch
+              checked={data?.write_enabled ?? false}
+              onChange={(v) => toggleWrite.mutate(v)}
+            />
+            <Typography.Text strong>允许 MCP 写入</Typography.Text>
+          </Space>
+          <Typography.Text type="secondary" className="text-[11px]">
+            开启后 AI 客户端可创建/修改/删除任务与项目；所有写入都会记录到 `op_log`，可在数据库
+            `.omnitodo/omnitodo.db` 审计。关闭时 MCP 为只读。
+          </Typography.Text>
+        </Space>
+      </Flex>
     </Card>
   );
 }
 
 function DataPanel() {
   const qc = useQueryClient();
+  const { message } = AntApp.useApp();
   const [format, setFormat] = useState<ExportFormat>("json");
-  const [status, setStatus] = useState<string | null>(null);
   const filter: TaskFilter = { sort: "createddesc", limit: 100000 };
 
   const doExport = async () => {
@@ -317,7 +331,7 @@ function DataPanel() {
     a.download = name;
     a.click();
     URL.revokeObjectURL(url);
-    setStatus(`已导出并复制到剪贴板：${name}`);
+    message.success(`已导出并复制到剪贴板：${name}`);
   };
 
   const doImport = async (file: File) => {
@@ -331,42 +345,45 @@ function DataPanel() {
     const n = await api.importRun(text, fmt);
     qc.invalidateQueries({ queryKey: qk.tasksAll });
     qc.invalidateQueries({ queryKey: qk.projects });
-    setStatus(`已导入 ${n} 条任务（来源格式：${fmt}）`);
+    message.success(`已导入 ${n} 条任务（来源格式：${fmt}）`);
   };
 
   return (
     <Card title="数据">
-      <Row label="导出">
-        <select
-          className={selectClass}
-          value={format}
-          onChange={(e) => setFormat(e.target.value as ExportFormat)}
+      <Flex vertical gap={16}>
+        <Row label="导出">
+          <Space wrap>
+            <Select
+              style={{ width: 240 }}
+              value={format}
+              onChange={(v) => setFormat(v as ExportFormat)}
+              options={[
+                { value: "json", label: "JSON（可再导入语义完整）" },
+                { value: "csv", label: "CSV" },
+                { value: "md", label: "Markdown" },
+              ]}
+            />
+            <Button icon={<DownloadOutlined />} onClick={doExport}>
+              导出并下载
+            </Button>
+          </Space>
+        </Row>
+        <Row
+          label="导入"
+          hint="`.md` 走 Markdown 语法（`- [ ] 标题 #标签`）；`.txt` 走 todo.txt（`(A) 任务 @情境 +项目`）；`.json` 走 Todoist 导出（含项目、标签、优先级、日期与子任务）。"
         >
-          <option value="json">JSON（可再导入语义完整）</option>
-          <option value="csv">CSV</option>
-          <option value="md">Markdown</option>
-        </select>
-        <button className={btnClass} onClick={doExport}>
-          导出并下载
-        </button>
-      </Row>
-      <Row label="导入">
-        <input
-          type="file"
-          accept=".md,.markdown,.txt,.json"
-          className="text-sm"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) doImport(f);
-            e.target.value = "";
-          }}
-        />
-        <p className="mt-1 text-xs text-neutral-500">
-          `.md` 走 Markdown 语法（`- [ ] 标题 #标签`）；`.txt` 走 todo.txt
-          （`(A) 任务 @情境 +项目`）；`.json` 走 Todoist 导出（含项目、标签、优先级、日期与子任务）。
-        </p>
-      </Row>
-      {status && <p className="text-xs text-green-700">{status}</p>}
+          <Upload
+            accept=".md,.markdown,.txt,.json"
+            showUploadList={false}
+            beforeUpload={(file) => {
+              void doImport(file as unknown as File);
+              return false;
+            }}
+          >
+            <Button icon={<UploadOutlined />}>选择文件</Button>
+          </Upload>
+        </Row>
+      </Flex>
     </Card>
   );
 }
@@ -377,39 +394,46 @@ function About() {
 
   return (
     <Card title="关于">
-      <Row label="版本">
-        <span className="font-mono text-sm">{version.data ?? "…"}</span>
-      </Row>
-      <Row label="更新">
-        <span className="text-sm text-neutral-600">
-          v1 为手动更新：从{" "}
-          <a className="text-blue-600 underline" href={releases.data ?? "#"} target="_blank" rel="noreferrer">
-            GitHub Releases
-          </a>{" "}
-          下载对应平台的安装包覆盖安装。
-        </span>
-      </Row>
+      <Flex vertical gap={16}>
+        <Row label="版本">
+          <Typography.Text code>{version.data ?? "…"}</Typography.Text>
+        </Row>
+        <Row label="更新">
+          <Typography.Text type="secondary">
+            v1 为手动更新：从{" "}
+            <Typography.Link href={releases.data ?? "#"} target="_blank" rel="noreferrer">
+              GitHub Releases <ExportOutlined />
+            </Typography.Link>{" "}
+            下载对应平台的安装包覆盖安装。
+          </Typography.Text>
+        </Row>
+      </Flex>
     </Card>
   );
 }
 
-const selectClass = "rounded border border-neutral-300 px-2 py-1 text-sm";
-const btnClass = "ml-2 rounded bg-neutral-900 px-3 py-1 text-sm text-white disabled:opacity-40";
-
-function Card({ title, children }: { title: string; children: ReactNode }) {
+function Row({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-4">
-      <h2 className="mb-3 font-medium">{title}</h2>
-      <div className="space-y-3">{children}</div>
-    </div>
-  );
-}
-
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div>
-      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">{label}</div>
-      <div className="flex flex-wrap items-center">{children}</div>
+    <div className="grid gap-1 sm:grid-cols-[112px_1fr] sm:items-start sm:gap-4">
+      <Typography.Text type="secondary" className="pt-1 text-xs">
+        {label}
+      </Typography.Text>
+      <div className="min-w-0">
+        {children}
+        {hint && (
+          <Typography.Text type="secondary" className="mt-1 block text-[11px]">
+            {hint}
+          </Typography.Text>
+        )}
+      </div>
     </div>
   );
 }

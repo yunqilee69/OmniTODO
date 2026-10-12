@@ -158,7 +158,18 @@ impl Core {
         .bind(&t.id)
         .fetch_one(&self.pool)
         .await?;
-        Ok(TaskDto::from_task(t, tag_ids, tags, has_att.0 > 0))
+        let has_sub: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE parent_id = ? AND deleted_at IS NULL")
+                .bind(&t.id)
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(TaskDto::from_task(
+            t,
+            tag_ids,
+            tags,
+            has_att.0 > 0,
+            has_sub.0 > 0,
+        ))
     }
 
     // ------------------------------------------------------------------ list
@@ -187,13 +198,14 @@ impl Core {
         let ids: Vec<Id> = rows.iter().map(|t| t.id.clone()).collect();
         let tag_map = self.tags_for_tasks(&ids).await?;
         let with_att = self.tasks_with_attachments(&ids).await?;
+        let with_sub = self.tasks_with_subtasks(&ids).await?;
 
         let items = rows
             .iter()
             .map(|t| {
                 let (tag_ids, tags) = tag_map.get(&t.id).cloned().unwrap_or_default();
                 let has = with_att.contains(&t.id);
-                TaskDto::from_task(t, tag_ids, tags, has)
+                TaskDto::from_task(t, tag_ids, tags, has, with_sub.contains(&t.id))
             })
             .collect();
 
@@ -635,11 +647,18 @@ impl Core {
         let ids: Vec<Id> = rows.iter().map(|t| t.id.clone()).collect();
         let tag_map = self.tags_for_tasks(&ids).await?;
         let with_att = self.tasks_with_attachments(&ids).await?;
+        let with_sub = self.tasks_with_subtasks(&ids).await?;
         Ok(rows
             .iter()
             .map(|t| {
                 let (tag_ids, tags) = tag_map.get(&t.id).cloned().unwrap_or_default();
-                TaskDto::from_task(t, tag_ids, tags, with_att.contains(&t.id))
+                TaskDto::from_task(
+                    t,
+                    tag_ids,
+                    tags,
+                    with_att.contains(&t.id),
+                    with_sub.contains(&t.id),
+                )
             })
             .collect())
     }

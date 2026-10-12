@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
+import { Alert, Button, Popconfirm, Switch, Typography } from "antd";
+import { FileOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect, useState } from "react";
 import { api, type StorageKind, type TaskDto } from "../api/client";
 import { qk } from "../api/queryKeys";
@@ -49,18 +51,25 @@ export default function AttachmentList({ task }: { task: TaskDto }) {
   useEffect(() => {
     let dispose: (() => void) | undefined;
     let cancelled = false;
-    getCurrentWebview()
-      .onDragDropEvent((event) => {
-        if (event.payload.type !== "drop") return;
-        for (const path of event.payload.paths) add.mutate(path);
-      })
-      .then((un) => {
-        if (cancelled) un();
-        else dispose = un;
-      })
-      .catch(() => {
-        /* not running inside Tauri (e.g. browser dev) */
-      });
+    // `getCurrentWebview()` reads `__TAURI_INTERNALS__` synchronously and throws
+    // outside Tauri, so the guard has to wrap the setup rather than chain a
+    // `.catch` onto it.
+    try {
+      getCurrentWebview()
+        .onDragDropEvent((event) => {
+          if (event.payload.type !== "drop") return;
+          for (const path of event.payload.paths) add.mutate(path);
+        })
+        .then((un) => {
+          if (cancelled) un();
+          else dispose = un;
+        })
+        .catch(() => {
+          /* not running inside Tauri (e.g. browser dev) */
+        });
+    } catch {
+      /* not running inside Tauri (e.g. browser dev) */
+    }
     return () => {
       cancelled = true;
       dispose?.();
@@ -74,55 +83,59 @@ export default function AttachmentList({ task }: { task: TaskDto }) {
   };
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-500">
-        <button
-          type="button"
-          className="rounded border border-neutral-300 px-2 py-1 hover:bg-neutral-50"
-          onClick={() => void pick()}
-        >
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="small" icon={<UploadOutlined />} onClick={() => void pick()}>
           添加附件
-        </button>
-        <span>或把文件拖到窗口里</span>
-        <label className="ml-auto flex items-center gap-1">
-          <input
-            type="checkbox"
+        </Button>
+        <Typography.Text type="secondary" className="text-[11px]">
+          或把文件拖到窗口里
+        </Typography.Text>
+        <span className="ml-auto flex items-center gap-1.5 text-[11px] opacity-70">
+          <Switch
+            size="small"
             checked={kind === "managed"}
-            onChange={(e) => setKind(e.target.checked ? "managed" : "blob")}
+            onChange={(v) => setKind(v ? "managed" : "blob")}
           />
           存为托管文件
-        </label>
+        </span>
       </div>
 
-      {notice && (
-        <p className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">{notice}</p>
-      )}
+      {notice && <Alert type="warning" showIcon message={notice} />}
 
-      <ul className="space-y-1">
+      <ul className="flex flex-col gap-1">
         {(attachments ?? []).length === 0 && (
-          <li className="text-xs text-neutral-400">暂无附件</li>
+          <li className="text-xs opacity-60">暂无附件</li>
         )}
         {(attachments ?? []).map((a) => (
-          <li key={a.id} className="flex items-center gap-2 text-xs">
-            <button
-              type="button"
-              className="min-w-0 flex-1 truncate text-left text-blue-600 underline"
-              onClick={() => void api.attachmentOpen(a.id)}
+          <li key={a.id} className="group flex items-center gap-2 text-small">
+            <FileOutlined className="opacity-60" />
+            <Typography.Link
+              className="min-w-0 flex-1 truncate text-left"
               title={a.rel_path ?? a.file_name}
+              onClick={() => void api.attachmentOpen(a.id)}
             >
               {a.file_name}
-            </button>
-            <span className="shrink-0 text-neutral-400">
+            </Typography.Link>
+            <span className="tabular font-mono-ui text-[11px] opacity-60">
               {formatSize(a.size_bytes)} · {a.storage_kind === "blob" ? "库内" : "托管"}
             </span>
-            <button
-              type="button"
-              className="shrink-0 text-neutral-400 hover:text-red-600"
-              onClick={() => remove.mutate(a.id)}
-              aria-label={`删除 ${a.file_name}`}
+            <Popconfirm
+              title="删除该附件？"
+              okText="删除"
+              cancelText="取消"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => remove.mutate(a.id)}
             >
-              ✕
-            </button>
+              <Button
+                type="text"
+                size="small"
+                danger
+                className="opacity-0 group-hover:opacity-100"
+                aria-label={`删除 ${a.file_name}`}
+                icon={<span aria-hidden>×</span>}
+              />
+            </Popconfirm>
           </li>
         ))}
       </ul>

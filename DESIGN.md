@@ -1,0 +1,598 @@
+# OmniTODO 视觉设计规范（DESIGN）
+
+- 版本：v1.0
+- 日期：2026-10-12
+- 适用：`ui/`（React 19 + Tailwind）
+- 关联文档：[`2026-10-12-todo-desktop-design.md`](./2026-10-12-todo-desktop-design.md)（产品与技术设计）、[`docs/implementation-status.md`](./docs/implementation-status.md)（实现进度）
+
+本文回答两件事：**这类产品适合什么风格**（§1–§2），以及**具体怎么落地成一套令牌与组件规范**（§3 起）。规范里的每个令牌都能直接写成 CSS 变量与 Tailwind 配置（§10），并给出从当前实现迁移的路径（§11）。
+
+---
+
+## 1. 结论先行：TODO 类产品适合什么风格
+
+**推荐方向：静默工坊（Quiet Workshop）—— 以「精密仪器 + 暖纸」为基调的冷静工具风。**
+
+一句话：**像一台做工很好的仪器放在一张暖色纸面的书桌上**。它不是白底蓝按钮的"又一个效率 App"，也不是花哨的便签玩具；它安静、精确、有手感，把注意力全留给任务本身。
+
+### 为什么是这个方向
+
+TODO 应用的使用场景对风格有明确约束：
+
+1. **每天开很多次、每次很短**。风格必须"一眼进入状态"，不能有需要适应的装饰。→ 排斥极繁与玻璃霓虹。
+2. **要扫读大量条目**。信息密度是功能，不是缺点。→ 需要克制的层级与清晰的字重差，而不是大圆角大留白的"卡片流"。
+3. **它要降低焦虑、而不是制造焦虑**。冷白 + 高饱和红会让人紧绷；暖中性纸面让人松弛。→ 暖色调基底。
+4. **它是"我自己的工具"，本地优先、无账号、键盘驱动**。气质应对齐"工匠的工具"，而非"社交产品的门面"。→ 有手感、有克制、有签名细节。
+5. **高频重复操作需要反馈的愉悦**。勾选完成是核心动作，值得一次满足的微交互。→ 动效聚焦在少数高光时刻。
+
+### 候选方向对比
+
+| 方向 | 代表气质 | 适配度 | 判断 |
+|---|---|---|---|
+| 极简冷静（Linear / Things 3） | 白底、细字、单一强调色 | 高 | 正确但**太容易撞款**，缺签名元素会沦为"通用后台" |
+| **精密仪器（Braun / Rams 仪表盘）** | 暖中性、精确刻度、单一信号色 | **最高** | **选它**：兼具冷静、密度、手感与独特性 |
+| 便签 / 手帐 | 暖纸、手写感 | 中 | 安抚但密度低、高频扫读不耐看 |
+| 柔和糖果（马卡龙） | 圆角、糖果色 | 中 | 亲和，但显"玩具"，专业性不足 |
+| 粗野主义（Brutalist） | 等宽、硬边、高密 | 中 | 极客向，但冷、可读性差、劝退普通用户 |
+| 玻璃拟态 / 霓虹暗色 | blur + glow 渐变 | 低 | 花哨、伤可读性、已是过时套路 |
+| 极繁 / 高饱和 | 装饰、动效堆叠 | 低 | 日常工具会迅速疲劳 |
+
+> 本规范落在"精密仪器"一档，并用**暖纸基底 + 仪表绿信号色 + 优先级左缘刻度 + 手写勾**四个签名元素破"通用后台"的局。
+
+---
+
+## 2. 设计原则与反模式
+
+### 2.1 五条原则
+
+1. **信息优先（Information first）**：任何装饰若不能帮助理解或操作，就去掉。密度是被鼓励的。
+2. **一个信号色（One signal）**：全局只有**一个品牌强调色**（仪表绿）。优先级、状态用另一套语义色系，二者永不混用。
+3. **扁平 + 发丝线（Flat + hairline）**：默认无阴影，靠 1px 暖灰发丝线分层；阴影只留给真正"浮起来"的东西（菜单、弹窗、提醒卡）。
+4. **颜色从不单独承载信息**：优先级/状态永远"颜色 + 形状/文字"双通道（左缘条纹、圆点、文案），保证色觉障碍下可读。
+5. **反馈要短促而确切（Fast, definite）**：动效 90–320ms，只出现在高光时刻；日常操作绝不弹跳、不连播动画。
+
+### 2.2 反模式（明确禁止）
+
+- 紫/蓝紫渐变配白底、渐变 hero 区。
+- 把 `Inter / Roboto / system-ui` 当作品牌字体（只可作 CJK/离线兜底）。
+- "每个卡片一个大柔和阴影 + 16px 大圆角 + 渐变描边"的 AI 后台套路。
+- 用 emoji 当功能图标（📎 ↻ ✕ ＋ 🔔）——渲染不一致、气质像玩具。
+- 纯黑色实心高亮做导航选中态（当前实现如此，见 §11）。
+- 只靠颜色区分优先级。
+- 骨架屏到处闪、彩带动效、常驻环境动画（对专注工具是干扰）。
+- 超过 3 个字号的层级、超过 2 个强调色相。
+
+---
+
+## 3. 设计令牌：色彩
+
+采用**语义令牌**命名，明/暗两套取值；组件只引用语义名，不写死色值。
+
+### 3.1 基底与文字
+
+| 语义令牌 | 明色（纸 Paper） | 暗色（炭 Charcoal） | 用途 |
+|---|---|---|---|
+| `--bg-app` | `#F6F3EE` | `#1A1816` | 应用底（暖纸 / 暖炭），带极淡纸纹（§6） |
+| `--bg-surface` | `#FCFAF7` | `#211F1D` | 主内容面（列表、详情、卡片） |
+| `--bg-sunken` | `#ECE8E0` | `#141311` | 侧栏 / 凹陷区 / 输入内陷 |
+| `--bg-hover` | `rgba(33,31,28,.05)` | `rgba(237,233,226,.06)` | 行/项悬停 |
+| `--bg-selected` | `rgba(14,110,99,.10)` | `rgba(63,167,149,.16)` | 选中（配合强调色左条） |
+| `--border-hairline` | `#E4DFD7` | `#2E2B27` | 默认分隔线（1px） |
+| `--border-strong` | `#CFC8BB` | `#3D3933` | 输入框、需要更明确边界处 |
+| `--text-primary` | `#211F1C` | `#EDE9E2` | 正文、任务标题 |
+| `--text-secondary` | `#57524A` | `#B3ACA0` | 次要文字 |
+| `--text-tertiary` | `#8A8378` | `#857E72` | 元信息、计数、时间戳 |
+| `--text-disabled` | `#B4AC9F` | `#5A544C` | 禁用 |
+| `--text-on-accent` | `#FFFFFF` | `#0B2B27` | 强调色上的文字 |
+
+### 3.2 品牌强调色（唯一信号色）
+
+| 语义令牌 | 明色 | 暗色 | 用途 |
+|---|---|---|---|
+| `--accent` | `#0E6E63` | `#3FA795` | 品牌色：选中、焦点环、"现在"/今天、主按钮 |
+| `--accent-hover` | `#0B5A51` | `#4FBBA8` | 悬停 |
+| `--accent-soft` | `#E3EFEB` | `#12312C` | 强调色浅底（选中行底、标签底） |
+| `--accent-ink` | `#0A4A43` | `#8FD8CC` | 强调色浅底上的文字 |
+
+> 为什么是"仪表绿/铜绿"（verdigris，`#0E6E63`）而不是蓝？蓝是效率工具的重灾区（Linear/Things/TickTick 都是蓝），且冷白+蓝会加重紧绷感。铜绿少见于该品类、与暖纸和谐、天然传达"校准/专注/指北针"的仪器感，且与全部优先级语义色都不冲突。
+
+### 3.3 优先级（左缘条纹 + 圆点，暖→热刻度）
+
+优先级是**刻度**，用一条 3px 左缘条纹 + 一个 6px 圆点表示，颜色由低到高升温。`none` 不显示条纹。
+
+| 优先级 | 令牌 | 明色条纹 | 说明 |
+|---|---|---|---|
+| none 无 | `--prio-none` | 透明 | 无条纹 |
+| low 低 | `--prio-low` | `#5A80B0`（灰蓝） | 最弱信号 |
+| medium 中 | `--prio-medium` | `#E0A70F`（琥珀） | |
+| high 高 | `--prio-high` | `#EF6A0E`（亮橙） | |
+| urgent 紧急 | `--prio-urgent` | `#D81F1A`（朱红） | 最高 |
+
+> 色相刻意沿 蓝 → 琥珀 → 橙 → 红 拉开：条纹只有 3px、圆点只有 6px，
+> 旧的赭石/焦橙/朱红三者色相过于接近，缩小到该尺寸后几乎无法区分。
+
+### 3.4 状态语义色
+
+| 语义令牌 | 明色 | 用途 |
+|---|---|---|
+| `--state-done` | `#6E7F60`（鼠尾草绿） | 已完成（勾痕、完成计数） |
+| `--state-overdue` | `#C23B2E` | 逾期（=朱红，配合图标/文案，不单用色） |
+| `--state-success` | `#3F7C4F` | 成功提示、MCP 连接正常 |
+| `--state-warning` | `#B9882B` | 警告 |
+| `--state-danger` | `#C23B2E` | 危险/删除 |
+| `--state-info` | `#4A6FA5` | 系统/MCP 中性信息 |
+| `--scrim` | `rgba(24,22,20,.38)` | 弹窗遮罩 |
+| `--focus-ring` | `--accent`（2px，offset 2px） | 键盘焦点 |
+
+### 3.5 对比度要求
+
+- 正文/任务标题 ≥ **4.5:1**；大字号与 UI 图形边界 ≥ **3:1**。
+- `--text-tertiary` 仅用于 ≥13px 的次级/元信息，不用于正文。
+- 交付前用对比度检查器复核两套主题全部"文字 × 底"组合。
+
+---
+
+## 4. 设计令牌：字体
+
+### 4.1 字族
+
+| 角色 | 字族 | 用途 |
+|---|---|---|
+| UI / 正文 | **IBM Plex Sans SC** → IBM Plex Sans → `system-ui, "PingFang SC", "Microsoft YaHei", sans-serif` | 界面与任务文本；Latin 与中文同源，气质统一、非通用脸 |
+| 展示 | **Fraunces**（variable）→ IBM Plex Sans SC → serif | 仅限：wordmark、空状态大标题、报告页大数字 |
+| 等宽 | **IBM Plex Mono** → `ui-monospace, SFMono-Regular, monospace` | 时间、计数、快捷键提示、MCP token/端口、代码/URI |
+
+> 字族不得换成 Inter/Roboto/system 作主字体。中文 UI 不设 letter-spacing（CJK 加字距会散）；Latin 小标签可 `+0.06em`。Fraunces 只用于展示层级，绝不进正文与表单。
+> **离线要求**：桌面应用不能依赖 Google Fonts CDN。用 `@fontsource/*` 打包进 bundle（见 §11）。
+
+### 4.2 字阶（桌面，root 16px）
+
+| 名称 | 字号/行高 | 字重 | 字族 | 用途 |
+|---|---|---|---|---|
+| `display-xl` | 32 / 1.15 | 600 | Fraunces | 空状态标题、wordmark |
+| `display` | 24 / 1.2 | 600 | Fraunces | 报告大数字、视图大标题 |
+| `title` | 18 / 1.3 | 600 | Plex Sans | 视图标题（"今天"） |
+| `section` | 15 / 1.4 | 600 | Plex Sans | 区块标题 |
+| `body` | 14 / 1.5 | 400 | Plex Sans | 任务标题、输入 |
+| `small` | 13 / 1.45 | 400 | Plex Sans | 次要说明 |
+| `meta` | 12 / 1.4 | 500 | Plex Sans / Mono | chip、计数、时间戳 |
+| `micro` | 11 / 1.3 | 600 | Plex Sans | 全大写分组标签（`+0.06em`） |
+| `mono-num` | 12–13 | 500 | Plex Mono | 时间、快捷键、token（`tabular-nums`） |
+
+- 字重只用 **400 / 500 / 600**（展示可 600）。禁止 700+。
+- 任务标题最大行宽 **~72ch**；超长截断 + `title` 提示。
+- 所有数字列（计数、日历、统计）启用 `font-variant-numeric: tabular-nums`。
+
+---
+
+## 5. 设计令牌：间距 · 圆角 · 层次
+
+### 5.1 间距（4px 基准）
+
+`0, 2, 4, 6, 8, 12, 16, 20, 24, 32, 40, 48, 64`
+
+| 场景 | 取值 |
+|---|---|
+| 图标与文字 | 6–8 |
+| chip 内边距 | 水平 6 / 垂直 2 |
+| 行内边距 | 见密度模式 |
+| 面板内边距 | 16–20 |
+| 区块间距 | 20–24 |
+| 页面外边距 | 24 |
+
+### 5.2 密度模式
+
+| | comfortable | compact（默认） |
+|---|---|---|
+| 行高 | 40px | 32px |
+| 行垂直内边距 | 8 | 4 |
+| 列表字号 | body 14 | body 14 |
+| 说明 | 触屏/演示 | 桌面键盘高频使用 |
+
+密度由设置项或 `[data-density]` 切换。
+
+### 5.3 圆角
+
+| 令牌 | 值 | 用途 |
+|---|---|---|
+| `--r-xs` | 4 | 小 chip |
+| `--r-sm` | 6 | 按钮、输入、导航项、任务行 |
+| `--r-md` | 10 | 卡片、面板、chips 组 |
+| `--r-lg` | 14 | 快速添加窗、模态 |
+| `--r-full` | 999 | 复选框、圆点、胶囊 |
+
+> 嵌套圆角 = 父圆角 − 间距间隔。大圆角只出现在真正"浮起"的容器。
+
+### 5.4 阴影 / 层次
+
+| 令牌 | 值 | 用途 |
+|---|---|---|
+| `--e0` | none（仅发丝线） | **默认**：列表、面板、卡片 |
+| `--e1` | `0 1px 2px rgba(33,31,28,.06), 0 1px 1px rgba(33,31,28,.04)` | 悬停浮起、拖拽静置 |
+| `--e2` | `0 4px 12px rgba(33,31,28,.10)` | 菜单、下拉、popover |
+| `--e3` | `0 12px 32px rgba(33,31,28,.16)` | 模态、快速添加窗、提醒卡、拖拽中 |
+
+原则：**扁平是常态，阴影是例外**。
+
+---
+
+## 6. 签名元素（让它不像"通用后台"）
+
+这五点是本设计的辨识度来源，必须落在实现里：
+
+1. **优先级左缘刻度**：任务行左侧 3px 全高条纹按优先级升温，`none` 留空。一眼扫读、无需 chip 堆叠。
+2. **纸感基底**：`--bg-app` 上叠一层 ~2% 不透明度的细噪点（`feTurbulence` 生成的内联 SVG 或极淡 PNG），侧栏顶边加 1px 微高光。多一分"实物"感，少一分"平网页面"。
+3. **仪表绿焦点**：所有"选中/现在/今天/主操作"都用铜绿。导航选中 = 左缘 2px 强调条 + `--bg-selected` 底，**不是黑色实心胶囊**。
+4. **手写勾**：复选框勾选时，勾线以 `stroke-dashoffset` 画出（约 160ms），而非瞬间出现。
+5. **"今天"指针线**：Today/Upcoming 列表与日历里，用 1px 强调色细线 + 小圆点标记"现在/今天"，像仪表指针。
+
+---
+
+## 7. 布局
+
+### 7.1 三栏骨架
+
+```
+┌───────────┬─────────────────────────────┬──────────────────┐
+│ Rail 264  │ List 自适应(≥360)            │ Detail 400       │
+│ 导航/项目 │ 标题栏 + 列表（虚拟滚动）     │ 详情（可改宽/抽屉）│
+│ /标签     │                             │                  │
+└───────────┴─────────────────────────────┴──────────────────┘
+```
+
+| 区域 | 宽度 | 说明 |
+|---|---|---|
+| Rail（`--bg-sunken`） | 默认 264，可拖 220–320 | 顶：Fraunces wordmark；搜索框；六条入口导航；项目（色点+计数）；标签（计数）；底：MCP 状态灯 + 设置入口 |
+| List（`--bg-surface`） | `flex-1`，min 360 | 顶栏：视图标题（`title`）+ 计数 + 筛选/排序；主体列表，>60 行开虚拟滚动 |
+| Detail（`--bg-surface`） | 默认 400，可拖 320–560 | 单列分区滚动：标题/状态/优先级/时间/项目/描述/重复/标签/附件 |
+
+- 栅格 8px；内容外边距 24px。
+- **窄窗降级**：窗口 < 900px → Detail 变右侧抽屉浮层；< 720px → Rail 折成 56px 图标栏。
+- 提醒卡：右下角堆叠，宽 320，`--e3`。
+- 快速添加：居中命令面板式模态，宽 640（上限），`--e3` + 遮罩 `blur(4px)`。
+
+### 7.2 当前实现差异（见 §11 迁移）
+
+现在是两栏（Rail + List）+ 详情浮层；目标为三栏可调。迁移可分阶段，不阻塞。
+
+---
+
+## 8. 组件规范
+
+> 每个组件给出：用法 / 关键令牌 / 状态 / 易错点。当前文件列在括号内，便于对照改造。
+
+### 8.1 导航项（`ProjectSidebar.tsx` / `App.tsx`）
+- 结构：`图标 + 文本 + 计数`，`--r-sm`，高 28–30，内边距水平 8。
+- 默认：`--text-primary`；悬停：`--bg-hover`。
+- **选中**：`--bg-selected` 底 + 左缘 2px `--accent` 条 + 文本 `--accent-ink`（暗色为 `--accent`）；计数弱化。
+- 悬停才显示的行内操作（删除 ✕）改为 Lucide 线性图标，默认 `--text-tertiary`，危险悬停 `--state-danger`。
+
+### 8.2 分组标签（`micro`）
+- 全大写、`--text-tertiary`、`+0.06em`、上方 16 下方 6。中文标题不强制全大写（中文无大小写），改为 12px/600/`--text-tertiary`。
+
+### 8.3 任务行（`TaskRow.tsx`）——本设计的核心组件
+- 布局：`[拖拽手柄] [复选框] [左缘刻度在行外侧] [标题 flex] [标签] [附件/重复图标] [优先级点] [日期 chip]`
+- 高度按密度模式；左缘刻度 3px 全高（`none` 无）。
+- 标题：`body`；完成态 `--text-disabled` + 删除线（删除线动画见 §9）。
+- 悬停：`--bg-hover`；悬停才露出"优先级点/＋日期"等次级操作。
+- 逾期：日期 chip 用 `--state-overdue` 文字 + 小警示线性图标（不单靠红色）。
+- **易错点**：不要给行加阴影（列表靠发丝线分隔）；不要用行背景色编码优先级（用左缘刻度）。
+
+### 8.4 复选框（`TaskRow.tsx`）
+- 24px 触区，视觉 16px 圆形，1.5px `--border-strong` 描边。
+- 悬停：描边变 `--accent`。勾选：填充 `--accent`（暗色 `--state-done`）+ 白/深勾，勾线 160ms 画出。
+- 键盘：`Space` 切换，`:focus-visible` 显示 2px 焦点环。
+
+### 8.5 优先级指示
+- 行内：6px 圆点，色取 §3.3；`none` 不显示（悬停露出空心点提示可设置）。
+- 就地编辑：点开为 popover 列表（无 / 低 / 中 / 高 / 紧急），当前项带勾。
+- 详情面板：圆点 + 文字标签，两通道。
+
+### 8.6 日期 / 时间 chip（`TaskRow.tsx` / `TaskDetail.tsx`）
+- 无值：`＋日期`，悬停才显示；有值：`meta` 字号 + Plex Mono 数字，`--bg-hover` 底、`--r-xs`。
+- 今天/明天等相对日期优先展示相对词，超出一周显示 `M月D日`。
+- 逾期：文字 + 图标双通道。
+
+### 8.7 标签 chip（`TagPicker.tsx`）
+- `#名称`，`meta` 字号，`--accent-soft` 底 + `--accent-ink` 文字；纯文字标签页可用中性底。
+- 可多选；已选带勾；搜索框过滤。
+
+### 8.8 按钮
+
+| 变体 | 样式 | 用途 |
+|---|---|---|
+| Primary | `--accent` 底 + `--text-on-accent`，`--r-sm`，高 32 | 主操作（新建、保存、导入确认） |
+| Secondary | `--bg-surface` + `--border-strong` 描边，文字 `--text-primary` | 次级操作 |
+| Ghost | 透明底，悬停 `--bg-hover` | 工具栏、图标按钮 |
+| Danger | `--state-danger` 底或描边 | 删除确认 |
+| Link | `--accent` 文字 + 悬停下划线 | 内联跳转（如 Releases 地址） |
+
+- 高 32（`compact`）/ 36（`comfortable`）；水平内边距 12；图标按钮 32×32。
+- 全部有 `:hover`（降亮度/加底）、`:active`（`translateY(0.5px)`）、`:focus-visible`（焦点环）、`:disabled`（`--text-disabled`、无悬停）。
+
+### 8.9 输入 / 文本域 / 下拉
+- 高 32；`--bg-sunken` 或白底 + `--border-strong`；`:focus` 换 `--accent` 描边 + 环。
+- 占位文字 `--text-tertiary`。**注意**：`input[type=date]` 空值在 WebKit 会显示灰色示例值（`docs/implementation-status.md` 缺陷 4）——用自定义日期选择或加显式占位修饰规避。
+
+### 8.10 详情面板（`TaskDetail.tsx`）
+- 单列分区，区段间 `--border-hairline` 分隔，不用卡片套卡片。
+- 标题为大号可编辑文本（`section`/`title` 字号）。完成、优先级、时间、项目为一组"属性行"。
+- 描述：Markdown `textarea` + 预览切换（`MarkdownPreview.tsx`）。
+- 附件：行式列表（图标 + 文件名 + 大小 + 删除），拖入上传区用虚线 `--border-strong`。
+- 重复编辑器（`RecurrenceEditor.tsx`）：频率分段控件 + 间隔/星期选择，预览人类可读文案。
+
+### 8.11 提醒卡片（`ReminderToasts.tsx`）
+- `--bg-surface` + `--border-hairline` + `--e3`，`--r-md`，宽 320，右下堆叠 `gap 8`。
+- 结构：状态红点（纯 CSS，非 emoji）+ 标题 + 提醒时间（Mono）+ 三个"稍后"Ghost 小按钮 + 关闭。
+- 入场：上滑 200ms + 阴影渐入。
+
+### 8.12 快速添加（`QuickAdd.tsx`）
+- 命令面板式模态：大输入框 + 下方实时解析 chips（标题 / `#项目` / `!优先级` / `^时间` / `@标签` / `::描述`）。
+- chip 随解析逐条弹出（120ms）。`#项目` 歧义时弹选择列表（设计 §12.2）。
+- 空态给语法提示（`!紧急 @设计 ^明天 18:00`）。
+
+### 8.13 日历（`Calendar.tsx`）
+- 月/周网格；格内任务用小条（`--r-xs`），颜色取项目色或优先级刻度。
+- 今天格：`--accent` 描边 + `--accent-soft` 底。
+- 已物化期次：实心、可拖；未来重复期次：虚线、只读（设计 §13.1）。
+- "现在"指针线（§6.5）。
+
+### 8.14 空状态
+- 居中：Fraunces 大标题（如"今天很干净"）+ 一句次级说明 + 一个 Primary 操作。
+- 用最小插画（线性、单色、呼应纸纹），不用 emoji 大图。
+
+### 8.15 MCP 状态灯（`Settings.tsx`）
+- 小圆点 + 文案：`--state-success`（运行中）/ `--text-tertiary`（未启用）/ `--state-danger`（错误）。
+- token/端口用 Mono 展示 + 一键复制（Ghost 图标按钮）。
+
+### 8.16 Toast / 提示
+- 底部或右下，`--e2`，`--r-md`，4s 自动消失；成功 `--state-success` 图标，错误 `--state-danger`。
+
+---
+
+## 9. 动效规范
+
+| 时长令牌 | 值 | 用途 |
+|---|---|---|
+| `--t-instant` | 90ms | 悬停/按压的颜色变化 |
+| `--t-fast` | 140ms | 小元素进出、chip 弹出 |
+| `--t-base` | 200ms | 面板滑入、提醒卡、抽屉 |
+| `--t-slow` | 320ms | 空状态/页面载入 |
+| `--ease-out` | `cubic-bezier(.2,.6,.2,1)` | 进入/默认 |
+| `--ease-in` | `cubic-bezier(.4,0,1,1)` | 退出 |
+
+**只做这几个高光时刻**：
+
+1. **勾选完成**（签名交互）：勾线画出（160ms）→ 标题删除线左→右画出 → 行背景闪一下 `--accent-soft` 再退去（约 300ms）→ 若当前筛选会隐藏已完成，则 400ms 后行淡出收拢。
+2. **列表载入**：`translateY(4px)→0` + 透明度，每项错开 24ms，最多前 8 项，每视图一次。
+3. **详情面板**：从右滑入（`translateX(12px)` + 透明度，200ms）。
+4. **快速添加解析**：chips 逐条弹出（120ms）。
+5. **拖拽**：拿起 `scale(1.01)` + `--e3` + `cursor: grabbing`；落下 140ms 落定。
+6. **提醒卡**：上滑 200ms + 阴影渐入。
+
+**禁止**：弹跳/弹簧（日常动作）、视差、常驻环境动画。
+**无障碍**：`@media (prefers-reduced-motion: reduce)` 下所有位移/缩放归零，仅保留透明度渐隐。
+
+---
+
+## 10. 令牌落地（Tailwind + CSS 变量）
+
+### 10.1 `ui/src/index.css`（令牌源，替换当前内容）
+
+```css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* 基底与文字（明：纸） */
+  --bg-app: #f6f3ee;
+  --bg-surface: #fcfaf7;
+  --bg-sunken: #ece8e0;
+  --bg-hover: rgba(33, 31, 28, 0.05);
+  --bg-selected: rgba(14, 110, 99, 0.10);
+  --border-hairline: #e4dfd7;
+  --border-strong: #cfc8bb;
+  --text-primary: #211f1c;
+  --text-secondary: #57524a;
+  --text-tertiary: #8a8378;
+  --text-disabled: #b4ac9f;
+  --text-on-accent: #ffffff;
+
+  /* 品牌强调（唯一信号色：仪表绿） */
+  --accent: #0e6e63;
+  --accent-hover: #0b5a51;
+  --accent-soft: #e3efeb;
+  --accent-ink: #0a4a43;
+
+  /* 优先级刻度 */
+  --prio-low: #5a80b0;
+  --prio-medium: #e0a70f;
+  --prio-high: #ef6a0e;
+  --prio-urgent: #d81f1a;
+
+  /* 状态 */
+  --state-done: #6e7f60;
+  --state-overdue: #c23b2e;
+  --state-success: #3f7c4f;
+  --state-warning: #b9882b;
+  --state-danger: #c23b2e;
+  --state-info: #4a6fa5;
+  --scrim: rgba(24, 22, 20, 0.38);
+  --focus-ring: var(--accent);
+
+  /* 圆角 / 阴影 / 动效 */
+  --r-xs: 4px; --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-full: 999px;
+  --e0: none;
+  --e1: 0 1px 2px rgba(33,31,28,.06), 0 1px 1px rgba(33,31,28,.04);
+  --e2: 0 4px 12px rgba(33,31,28,.10);
+  --e3: 0 12px 32px rgba(33,31,28,.16);
+  --t-instant: 90ms; --t-fast: 140ms; --t-base: 200ms; --t-slow: 320ms;
+  --ease-out: cubic-bezier(.2,.6,.2,1);
+  --ease-in: cubic-bezier(.4,0,1,1);
+
+  /* 字体 */
+  --font-ui: "IBM Plex Sans SC", "IBM Plex Sans", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-display: "Fraunces", "IBM Plex Sans SC", serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+:root[data-theme="dark"] {
+  --bg-app: #1a1816;
+  --bg-surface: #211f1d;
+  --bg-sunken: #141311;
+  --bg-hover: rgba(237, 233, 226, 0.06);
+  --bg-selected: rgba(63, 167, 149, 0.16);
+  --border-hairline: #2e2b27;
+  --border-strong: #3d3933;
+  --text-primary: #ede9e2;
+  --text-secondary: #b3aca0;
+  --text-tertiary: #857e72;
+  --text-disabled: #5a544c;
+  --text-on-accent: #0b2b27;
+  --accent: #3fa795;
+  --accent-hover: #4fbba8;
+  --accent-soft: #12312c;
+  --accent-ink: #8fd8cc;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --e1: 0 1px 2px rgba(0,0,0,.4);
+  --e2: 0 4px 12px rgba(0,0,0,.5);
+  --e3: 0 12px 32px rgba(0,0,0,.6);
+}
+
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--bg-app); color: var(--text-primary); font-family: var(--font-ui); }
+.tabular { font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+```
+
+> 纸纹可用一层伪元素叠内联 SVG `feTurbulence`（baseFrequency ~0.8，opacity 0.02）实现，见 §6.2。
+
+### 10.2 `ui/tailwind.config.js`（把语义令牌映射成工具类）
+
+```js
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  theme: {
+    extend: {
+      colors: {
+        app: "var(--bg-app)",
+        surface: "var(--bg-surface)",
+        sunken: "var(--bg-sunken)",
+        hairline: "var(--border-hairline)",
+        strong: "var(--border-strong)",
+        primary: "var(--text-primary)",
+        secondary: "var(--text-secondary)",
+        tertiary: "var(--text-tertiary)",
+        disabled: "var(--text-disabled)",
+        accent: { DEFAULT: "var(--accent)", hover: "var(--accent-hover)", soft: "var(--accent-soft)", ink: "var(--accent-ink)" },
+        prio: { low: "var(--prio-low)", medium: "var(--prio-medium)", high: "var(--prio-high)", urgent: "var(--prio-urgent)" },
+        done: "var(--state-done)", overdue: "var(--state-overdue)",
+        success: "var(--state-success)", warning: "var(--state-warning)",
+        danger: "var(--state-danger)", info: "var(--state-info)",
+      },
+      borderRadius: { xs: "var(--r-xs)", sm: "var(--r-sm)", md: "var(--r-md)", lg: "var(--r-lg)" },
+      boxShadow: { e1: "var(--e1)", e2: "var(--e2)", e3: "var(--e3)" },
+      fontFamily: { ui: "var(--font-ui)", display: "var(--font-display)", mono: "var(--font-mono)" },
+      transitionTimingFunction: { out: "var(--ease-out)", in: "var(--ease-in)" },
+    },
+  },
+  plugins: [],
+};
+```
+
+> 迁移期的兼容做法：把 `text-neutral-900` → `text-primary`、`text-neutral-500` → `text-secondary`、`bg-neutral-50` → `bg-app`、`border-neutral-200` → `border-hairline`、`bg-neutral-900 text-white`（选中态）→ `bg-accent-soft text-accent-ink`，逐步替换。
+
+---
+
+## 11. 迁移路线（对照当前实现）
+
+当前 `ui/` 是完全默认的 Tailwind：清一色 `neutral-*`、系统字体、`rounded`/`rounded-lg`、几乎无动效、emoji 当图标（脚本可复核，见 `grep -rhoE '(bg|text|border)-neutral-[0-9]+' ui/src`）。按下面顺序改，每步都可独立验收：
+
+| 阶段 | 动作 | 涉及文件 |
+|---|---|---|
+| **S1 令牌** | 写入 §10 的 `index.css` 与 `tailwind.config.js`；接入 `@fontsource-variable/fraunces`、`@fontsource/ibm-plex-sans(-sc)`、`@fontsource/ibm-plex-mono`，在 `main.tsx` import | `index.css`, `tailwind.config.js`, `package.json`, `main.tsx` |
+| **S2 骨架** | 应用底/侧栏/内容面换 `bg-app`/`bg-sunken`/`bg-surface`；导航选中态由黑胶囊改为强调色左条 + 浅底 | `App.tsx`, `ProjectSidebar.tsx` |
+| **S3 任务行** | 加左缘优先级刻度；复选框定制 + 手写勾；日期/优先级 chip 令牌化；换 Lucide 图标替 emoji | `TaskRow.tsx`, `TaskList.tsx` |
+| **S4 面板与卡** | 详情面板、提醒卡、快速添加套用 `--r-*`/`--e*` 与入场动效 | `TaskDetail.tsx`, `ReminderToasts.tsx`, `QuickAdd.tsx` |
+| **S5 动效与空态** | 勾选完成微交互、列表载入错开、空状态换 Fraunces 大标题 | `TaskRow.tsx`, `TaskList.tsx` 各视图 |
+| **S6 主题** | 设置里接明/暗切换（`data-theme`），暗色令牌已在 §10.1 备好 | `Settings.tsx`, `stores/ui.ts` |
+
+**验收注意**：`scripts/smoke-gui-xvfb.sh` 等冒烟脚本含像素断言（区域灰度变化、标题区深色文字），改主题后需**重跑**：断言多为"变化前后对比"，本身与配色无关，但 deep-link 用例断言"标题区有深色文字"，浅色主题下依然成立，仍建议实机复核一遍。字体必须**打包进 bundle**（离线/打包环境无网络）。
+
+---
+
+## 12. 文案与语气
+
+- 默认 `zh-CN`，克制、直接、动词开头。按钮用动词（"新建项目""稍后 10 分钟"）。
+- 空状态给"平静 + 下一步"，不卖萌（"今天很干净" + "记一件要做的事"）。
+- 危险操作说清后果（"删除项目（连同其任务）"——已是现状，保持）。
+- 时间用相对词优先（今天/明天/周三），超一周落回日期。
+- 技术信息（端口、token、URI）一律 Mono 等宽展示。
+
+---
+
+## 13. 无障碍清单
+
+- [ ] 两套主题所有"文字×底" ≥ AA；`--text-tertiary` 不进正文。
+- [ ] 优先级/状态 = 颜色 + 形状/文字双通道。
+- [ ] 全部可交互元素可 Tab 到达、`:focus-visible` 有 2px 焦点环。
+- [ ] 复选框/导航支持键盘（`Space`/`Enter`/方向键）；拖拽有键盘替代（上/下移）。
+- [ ] `prefers-reduced-motion` 生效。
+- [ ] 焦点不因面板开关而丢失（详情关闭后焦点回到触发行）。
+- [ ] `aria-label` 覆盖图标按钮（现状已有 `${'完成 '}${title}` 之类，保持）。
+
+---
+
+## 14. 令牌速查
+
+| 类别 | 令牌 |
+|---|---|
+| 面 | app / surface / sunken / hover / selected |
+| 线 | hairline / strong |
+| 字 | primary / secondary / tertiary / disabled / on-accent |
+| 强调 | accent / accent-hover / accent-soft / accent-ink |
+| 优先级 | prio-low / prio-medium / prio-high / prio-urgent |
+| 状态 | done / overdue / success / warning / danger / info / scrim / focus-ring |
+| 圆角 | r-xs 4 / r-sm 6 / r-md 10 / r-lg 14 / r-full |
+| 阴影 | e0 无 / e1 / e2 / e3 |
+| 动效 | t-instant 90 / t-fast 140 / t-base 200 / t-slow 320 · ease-out / ease-in |
+| 字族 | font-ui（Plex Sans SC）/ font-display（Fraunces）/ font-mono（Plex Mono） |
+
+---
+
+## 15. 实现状态（当前）
+
+组件层由 **antd v6** 承担，配色/圆角/字体等令牌通过 `ConfigProvider` 的 `theme` 喂给 antd
+（**不是**用 antd 默认蓝）。这样既拿到 antd 的开箱组件与交互，又保留本规范的「静默工坊」外观。
+`antd@6` 要求 `react >= 18`（本项目 React 19，无需 v5 的 React 19 patch），且 v6 的选择器不再用
+`:where(...)`，因此与 Tailwind preflight 不冲突，无需 `StyleProvider`。
+
+| 层 | 落地 |
+|---|---|
+| 主题 | `src/theme/antd.ts`：`buildAntdTheme(light|dark)` 把 §3 调色板映射为 `colorPrimary`（仪表绿）、`colorBgLayout/Container/Elevated`、`colorText*`、`colorBorder*`、`borderRadius`、`fontFamily`、`controlHeight` 等，并按明暗切换 `defaultAlgorithm`/`darkAlgorithm`；`Layout`/`Menu`/`Card`/`Segmented`/`Drawer` 等做了组件级覆盖 |
+| 组件 | 应用壳用 `Layout`+`Sider`+`Menu`；任务行用 `Checkbox`/`Typography.Text(delete,ellipsis)`/`Tag`/`Dropdown`/`DatePicker`/`Tooltip`；详情用 `Drawer`+`Select`/`DatePicker`/`Switch`/`Input.TextArea`/`Popconfirm`；提醒用 `App.useApp().notification`；日历/快速添加/设置用 `Segmented`/`Button`/`Tag`/`Alert`/`Card`/`Upload`/`Switch`；加载/空/错误态用 `Skeleton`/`Empty`/`Alert`；表单校验与反馈用 `Popconfirm`/`message` |
+| 自留样式 | `src/index.css` 只保留 antd 不负责的部分：调色板 CSS 变量（供纸纹与优先级左缘条纹使用）、页面底色/字体、细滚动条、纸纹、`tabular` 数字。§4/§5 的字阶、间距、圆角、阴影等由 antd token 表达 |
+| 图标 | 全部改用 `@ant-design/icons`（替换原先的手写 SVG 与 emoji） |
+| 主题切换 | 明/暗/跟随系统；写 `[data-theme]` 供自留 CSS 变量，同时驱动 antd algorithm；持久化到 `settings.ui.theme` |
+
+**两处刻意的偏离**（都是为了不丢功能）：
+
+1. **日历网格自绘**：antd `Calendar` 无法承载「把已物化期次拖到另一天」的跨格拖拽，故月/周网格保留 CSS Grid，工具栏与任务块用 antd `Segmented`/`Button`/`Tag`。
+2. **列表容器是 `<ul>`**：dnd-kit 排序与 `@tanstack/react-virtual` 都需要真实行元素，antd `List` 的 `<li>` 容器无法承载；列表状态仍用 antd `Skeleton`/`Empty`/`Alert`。
+
+**字体偏差**：`@fontsource/ibm-plex-sans-sc` 不存在，中文回退系统字体（PingFang SC / Microsoft YaHei /
+Noto Sans CJK SC）；Latin 自托管 `IBM Plex Sans`，展示字体 `Fraunces Variable`、等宽 `IBM Plex Mono`
+（仅打包 latin 子集，约 250 KB）。
+
+**验证**：`cd ui && npm run build`（`tsc --noEmit` + Vite）通过；`npm test` 64/64 通过；
+已用无头 Chrome 渲染真实页面（通过临时 `preview.html` 桩掉 Tauri IPC）核对 Inbox 明色外观。
+代价：antd 使前端产物增至约 1.3 MB（gzip ~420 KB）。像素级全页验收仍建议在真实桌面会话或
+仓库自带的 Xvfb 冒烟（`docs/implementation-status.md`）中复跑。
+
+
+

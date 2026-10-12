@@ -108,6 +108,20 @@ macOS 上 `omnitodo://` 由 `Info.plist` 的 `CFBundleURLSchemes` 注册（与 L
 | P5 | MCP：stdio + HTTP 同时可用、只读工具 + `summary_report` | ✅ | `tests/mcp_tests.rs` 含真实二进制 stdio 与 HTTP 端到端；只读实例写库被拒测试 |
 | P6 | MCP 写工具（受开关）+ 审计、打包分发 | ✅ Linux + Windows(NSIS) + macOS(.app/.dmg) / ⚠️ MSI·签名公证 | 写工具开关 + `mcp_audit` 测试通过；Linux `deb`/`AppImage` 已构建、装包后跑通页面级冒烟；Windows NSIS 安装包在 Linux 上交叉构建产出并核对载荷（未签名、未在 Windows 运行）；**macOS `.app`(23.5 MiB)/`.dmg`(9.0 MiB) 已在 macOS 构建机产出、挂载核对并真机运行**（见打包文档）；MSI（需 WiX/Windows）、macOS 签名/公证、Releases 上传需对应环境与证书 |
 
+## 前端组件层（Ant Design v6）
+
+`ui/` 的组件层已从手写 Tailwind 组件全量替换为 **Ant Design v6**，配色/圆角/字体按
+[`DESIGN.md`](../DESIGN.md) 通过 `ConfigProvider` 的 `theme` 令牌注入（`ui/src/theme/antd.ts`），
+明/暗/跟随系统三态同时驱动 antd 算法与自留 CSS 变量。两处刻意保留自绘：日历网格
+（antd `Calendar` 无法承载跨格拖拽改期）与列表容器 `<ul>`（antd `List` 会丢 dnd-kit 排序与
+`@tanstack/react-virtual` 开窗）。验证：`npm run build` + `npm test`（69/69）通过，并用无头
+Chrome 渲染真实页面逐一核对了 Inbox（明/暗）、详情抽屉、日历、快速添加、项目/标签视图、设置。
+
+⚠️ **待复跑**：`scripts/smoke-gui-xvfb.sh` 用**硬编码坐标**点击（`ROW_Y`/`NAV_Y_*`/`PANEL_CLOSE_*` 等，
+见该脚本第 109–129 行），antd 改版后侧栏 Menu、行高、抽屉位置都已变化，这些常量需要按新布局
+重新标定；本机（macOS）无 X11/Xvfb，未能在此复跑，故上表 P1–P4 的页面级冒烟证据仍是改版**之前**
+那一轮的结果。
+
 ## 与设计的两处实现偏差
 
 1. **MCP 协议自实现，未用 `rmcp` crate**。设计 §3 指定 `rmcp`，但其 3.x API

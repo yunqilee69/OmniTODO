@@ -232,6 +232,31 @@ impl Core {
         Ok(set)
     }
 
+    // -- subtask flag -------------------------------------------------------
+
+    /// Subset of `task_ids` that have at least one child, i.e. the ones whose row
+    /// gets an expand affordance in the list.
+    pub async fn tasks_with_subtasks(&self, task_ids: &[Id]) -> Result<HashSet<Id>> {
+        let mut set = HashSet::new();
+        if task_ids.is_empty() {
+            return Ok(set);
+        }
+        for chunk in task_ids.chunks(400) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT DISTINCT parent_id FROM tasks WHERE deleted_at IS NULL AND parent_id IN ({placeholders})"
+            );
+            let mut q = sqlx::query_as::<_, (String,)>(&sql);
+            for id in chunk {
+                q = q.bind(id);
+            }
+            for (id,) in q.fetch_all(&self.pool).await? {
+                set.insert(id);
+            }
+        }
+        Ok(set)
+    }
+
     // -- full text search maintenance --------------------------------------
 
     /// Insert or refresh the FTS row for a task. Rows for soft-deleted tasks are

@@ -2,9 +2,112 @@
 @tailwind components;
 @tailwind utilities;
 
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
+/* ============================================================================
+   OmniTODO — custom layer on top of antd v6.
+   antd owns the component styling (see src/theme/antd.ts). This file keeps the
+   few things antd doesn't: the DESIGN.md palette as CSS variables (used by the
+   paper grain and the priority-edge stripes), page background, scrollbars and a
+   numeric helper.
+   ========================================================================== */
+
+:root {
+  /* Surfaces & text (light: paper) — mirrors src/theme/antd.ts */
+  --bg-app: #f6f3ee;
+  --bg-surface: #fcfaf7;
+  --bg-sunken: #ece8e0;
+  --border-hairline: #e4dfd7;
+  --border-strong: #cfc8bb;
+  --text-tertiary: #8a8378;
+  --text-on-accent: #ffffff;
+
+  /* Brand accent */
+  --accent: #0e6e63;
+  --accent-soft: #e3efeb;
+  --accent-ink: #0a4a43;
+
+  /* Priority scale (low → hot) — the left-edge stripe.
+     Hues are spread across blue → amber → orange → red so the tiny 6px dot
+     and 3px stripe stay distinguishable; the old ochre/orange/red trio sat
+     too close together to read apart at that size. */
+  --prio-low: #5a80b0;
+  --prio-medium: #e0a70f;
+  --prio-high: #ef6a0e;
+  --prio-urgent: #d81f1a;
+
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg-app: #1a1816;
+  --bg-surface: #211f1d;
+  --bg-sunken: #141311;
+  --border-hairline: #2e2b27;
+  --border-strong: #3d3933;
+  --text-tertiary: #857e72;
+  --text-on-accent: #0b2b27;
+  --accent: #3fa795;
+  --accent-soft: #12312c;
+  --accent-ink: #8fd8cc;
+  color-scheme: dark;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background: var(--bg-app);
+    font-family: var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Thin, warm scrollbars — the app is a long-list tool. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-hairline) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--border-hairline);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+}
+
+@layer components {
+  /* Paper grain (DESIGN §6.2): subtle physical-texture hint. */
+  .app-grain {
+    position: relative;
+  }
+  .app-grain::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.025;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  .font-mono-ui {
+    font-family: var(--font-mono);
+  }
 }

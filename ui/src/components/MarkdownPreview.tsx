@@ -1,8 +1,12 @@
 import { useMemo, type ReactNode } from "react";
+import { Divider, Typography } from "antd";
 import { parseMarkdown, type Block, type Inline } from "../lib/markdown";
 
+const { Title, Paragraph, Text, Link } = Typography;
+
 /** Renders the parsed description as React nodes (never raw HTML), so a task
- *  description cannot inject markup (design §13.2: preview only, no editor). */
+ *  description cannot inject markup (design §13.2: preview only, no editor).
+ *  Uses antd `Typography` so styles follow the active theme tokens. */
 export default function MarkdownPreview({
   source,
   className = "",
@@ -12,29 +16,34 @@ export default function MarkdownPreview({
 }) {
   const blocks = useMemo(() => parseMarkdown(source ?? ""), [source]);
   if (!source || !source.trim()) {
-    return <p className="text-sm text-neutral-400">暂无描述</p>;
+    return <Text type="secondary">暂无描述</Text>;
   }
-  return <div className={`space-y-2 text-sm ${className}`}>{blocks.map(renderBlock)}</div>;
+  return <div className={className}>{blocks.map(renderBlock)}</div>;
 }
 
 function renderBlock(block: Block, i: number) {
   switch (block.type) {
-    case "heading": {
-      const Tag = (`h${Math.min(block.level + 2, 6)}`) as "h3";
+    case "heading":
       return (
-        <Tag key={i} className="font-semibold">
+        <Title key={i} level={Math.min(block.level + 3, 5) as 3 | 4 | 5} style={{ marginTop: 8 }}>
           {renderInline(block.children)}
-        </Tag>
+        </Title>
       );
-    }
     case "paragraph":
-      return <p key={i}>{renderInline(block.children)}</p>;
+      return <Paragraph key={i}>{renderInline(block.children)}</Paragraph>;
     case "code":
       return (
         <pre
           key={i}
-          className="overflow-x-auto rounded bg-neutral-100 p-2 font-mono text-xs"
           data-lang={block.lang ?? undefined}
+          style={{
+            overflowX: "auto",
+            padding: 8,
+            borderRadius: 6,
+            border: "1px solid var(--border-hairline)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 12,
+          }}
         >
           <code>{block.value}</code>
         </pre>
@@ -42,23 +51,26 @@ function renderBlock(block: Block, i: number) {
     case "list": {
       const items = block.items.map((item, k) => <li key={k}>{renderInline(item)}</li>);
       return block.ordered ? (
-        <ol key={i} className="list-decimal pl-5">
+        <ol key={i} style={{ paddingInlineStart: 20 }}>
           {items}
         </ol>
       ) : (
-        <ul key={i} className="list-disc pl-5">
+        <ul key={i} style={{ paddingInlineStart: 20, listStyle: "disc" }}>
           {items}
         </ul>
       );
     }
     case "quote":
       return (
-        <blockquote key={i} className="border-l-2 border-neutral-300 pl-3 text-neutral-600">
+        <Paragraph
+          key={i}
+          style={{ borderInlineStart: "2px solid var(--border-hairline)", paddingInlineStart: 12 }}
+        >
           {renderInline(block.children)}
-        </blockquote>
+        </Paragraph>
       );
     case "hr":
-      return <hr key={i} className="border-neutral-200" />;
+      return <Divider key={i} style={{ margin: "12px 0" }} />;
   }
 }
 
@@ -68,22 +80,18 @@ function renderInline(nodes: Inline[]): ReactNode[] {
       case "text":
         return node.value;
       case "code":
-        return (
-          <code key={i} className="rounded bg-neutral-100 px-1 font-mono text-xs">
-            {node.value}
-          </code>
-        );
+        return <Text key={i} code>{node.value}</Text>;
       case "strong":
-        return <strong key={i}>{renderInline(node.children)}</strong>;
+        return <Text key={i} strong>{renderInline(node.children)}</Text>;
       case "em":
-        return <em key={i}>{renderInline(node.children)}</em>;
+        return <Text key={i} italic>{renderInline(node.children)}</Text>;
       case "strike":
-        return <s key={i}>{renderInline(node.children)}</s>;
+        return <Text key={i} delete>{renderInline(node.children)}</Text>;
       case "link":
         return (
-          <a key={i} className="text-blue-600 underline" href={node.href} target="_blank" rel="noreferrer">
+          <Link key={i} href={node.href} target="_blank" rel="noreferrer">
             {renderInline(node.children)}
-          </a>
+          </Link>
         );
     }
   });

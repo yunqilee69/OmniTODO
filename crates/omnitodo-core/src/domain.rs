@@ -215,6 +215,9 @@ pub struct TaskDto {
     pub tag_ids: Vec<Id>,
     pub tags: Vec<String>,
     pub has_attachments: bool,
+    /// At least one task has this one as its `parent_id`. Drives the list's
+    /// expand/collapse affordance; the drawer shows the whole subtree.
+    pub has_subtasks: bool,
     pub sort_order: i64,
     pub created_at: i64,
     pub updated_at: i64,
@@ -222,7 +225,13 @@ pub struct TaskDto {
 }
 
 impl TaskDto {
-    pub fn from_task(t: &Task, tag_ids: Vec<Id>, tags: Vec<String>, has_attachments: bool) -> Self {
+    pub fn from_task(
+        t: &Task,
+        tag_ids: Vec<Id>,
+        tags: Vec<String>,
+        has_attachments: bool,
+        has_subtasks: bool,
+    ) -> Self {
         TaskDto {
             id: t.id.clone(),
             project_id: t.project_id.clone(),
@@ -246,6 +255,7 @@ impl TaskDto {
             tag_ids,
             tags,
             has_attachments,
+            has_subtasks,
             sort_order: t.sort_order,
             created_at: t.created_at,
             updated_at: t.updated_at,

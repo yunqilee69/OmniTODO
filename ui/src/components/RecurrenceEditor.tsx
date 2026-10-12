@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Alert, Input, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 import { api, type TaskDto, type TaskPatch } from "../api/client";
 import { formatDue } from "../lib/dates";
@@ -58,65 +59,56 @@ export default function RecurrenceEditor({
   };
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap gap-1">
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap gap-1.5">
         {PRESETS.map(([label, value]) => (
-          <button
-            key={value}
-            type="button"
-            className="rounded bg-neutral-100 px-2 py-0.5 text-xs hover:bg-neutral-200"
-            onClick={() => setText(value)}
-          >
+          <Tag key={value} className="cursor-pointer select-none" onClick={() => setText(value)}>
             {label}
-          </button>
+          </Tag>
         ))}
         {task.recurrence_rule && (
-          <button
-            type="button"
-            className="rounded px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100"
+          <Tag
+            className="cursor-pointer select-none"
             onClick={() => {
               setText("");
               onPatch({ clear_recurrence: true });
             }}
           >
             清除
-          </button>
+          </Tag>
         )}
       </div>
 
-      <input
-        className="w-full rounded border border-neutral-300 px-2 py-1 text-xs"
+      <Input
+        size="small"
         placeholder="例如 每周一,三,五 或 FREQ=WEEKLY;BYDAY=MO,WE"
         value={text}
         onChange={(e) => setText(e.target.value)}
         onBlur={save}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            save();
-          }
-        }}
+        onPressEnter={save}
       />
 
       {trimmed && canonical.isError && (
-        <p className="text-xs text-red-600">规则无法识别：{String(canonical.error)}</p>
+        <Alert type="error" showIcon message={`规则无法识别：${String(canonical.error)}`} />
       )}
       {rule && (
-        <p className="font-mono text-xs text-neutral-500">{rule}</p>
+        <Typography.Text type="secondary" className="font-mono-ui text-[11px]">
+          {rule}
+        </Typography.Text>
       )}
       {anchor == null && rule && (
-        <p className="text-xs text-amber-700">先设置截止或开始时间，才能计算期次。</p>
+        <Alert type="warning" showIcon message="先设置截止或开始时间，才能计算期次。" />
       )}
 
       {preview.data && preview.data.length > 0 && (
-        <p className="text-xs text-neutral-500">
+        <Typography.Text type="secondary" className="text-[11px]">
           接下来 {preview.data.length} 期：
           {preview.data
             .slice(0, 5)
             .map((ms) => formatDue(ms, task.all_day))
             .join("、")}
           {preview.data.length > 5 ? " …" : ""}
-        </p>
+        </Typography.Text>
       )}
     </div>
   );

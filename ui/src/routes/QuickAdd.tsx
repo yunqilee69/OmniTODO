@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Alert, Button, Input, Select, Space, Tag, Typography } from "antd";
 import { useState } from "react";
 import { api } from "../api/client";
+import PageHeader from "../components/PageHeader";
 
 const NEW_PROJECT = "__new__";
 
@@ -45,65 +47,84 @@ export default function QuickAdd() {
   if (draft?.recurrence_rule) chips.push(`*${draft.recurrence_rule}`);
 
   return (
-    <section className="max-w-xl">
-      <h1 className="mb-4 text-xl font-semibold">快速添加</h1>
-      <input
-        autoFocus
-        className="w-full rounded border border-neutral-300 px-3 py-2"
-        placeholder="写周报 !高 @工作 #OmniTODO ^明天 ~30m"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && draft && !draft.needs_project_choice) commit.mutate();
-        }}
-      />
+    <section className="flex h-full min-h-0 flex-col">
+      <PageHeader title="快速添加" />
+      <div className="min-h-0 flex-1 overflow-auto px-6 py-6">
+        <div className="mx-auto w-full max-w-2xl">
+          <Input
+            autoFocus
+            size="large"
+            placeholder="写周报 !高 @工作 #OmniTODO ^明天 ~30m"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onPressEnter={() => {
+              if (draft && !draft.needs_project_choice) commit.mutate();
+            }}
+          />
 
-      {draft && (
-        <div className="mt-3 space-y-3">
-          <div className="flex flex-wrap gap-2 text-xs">
-            {chips.map((c) => (
-              <span key={c} className="rounded bg-neutral-100 px-2 py-0.5">
-                {c}
-              </span>
-            ))}
-            {draft.title && (
-              <span className="rounded bg-emerald-50 px-2 py-0.5 text-emerald-700">
-                标题：{draft.title}
-              </span>
-            )}
-          </div>
-
-          {draft.needs_project_choice && (
-            <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm">
-              <p className="mb-2">项目「{draft.project_name}」没有精确匹配，请选择：</p>
-              <select
-                className="w-full rounded border border-neutral-300 px-2 py-1"
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-              >
-                <option value="">不归入项目（进收件箱）</option>
-                {draft.project_candidates.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
+          {draft ? (
+            <div className="mt-4 flex flex-col gap-3">
+              <div className="flex flex-wrap gap-1.5">
+                {chips.map((c) => (
+                  <Tag key={c} className="font-mono-ui" style={{ marginInlineEnd: 0 }}>
+                    {c}
+                  </Tag>
                 ))}
-                <option value={NEW_PROJECT}>新建项目「{draft.project_name}」</option>
-              </select>
-            </div>
-          )}
+                {draft.title && (
+                  <Tag
+                    style={{
+                      marginInlineEnd: 0,
+                      background: "var(--accent-soft)",
+                      color: "var(--accent-ink)",
+                      border: "none",
+                    }}
+                  >
+                    标题：{draft.title}
+                  </Tag>
+                )}
+              </div>
 
-          <button
-            className="rounded bg-neutral-900 px-4 py-1.5 text-sm text-white disabled:opacity-40"
-            disabled={commit.isPending || !draft.title}
-            onClick={() => commit.mutate()}
-          >
-            添加
-          </button>
-          {commit.isError && (
-            <p className="text-sm text-red-600">{String(commit.error)}</p>
+              {draft.needs_project_choice && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message={`项目「${draft.project_name}」没有精确匹配，请选择`}
+                  description={
+                    <Select
+                      style={{ width: "100%", marginTop: 8 }}
+                      value={projectId}
+                      onChange={setProjectId}
+                      options={[
+                        { value: "", label: "不归入项目（进收件箱）" },
+                        ...draft.project_candidates.map((p) => ({ value: p.id, label: p.name })),
+                        { value: NEW_PROJECT, label: `新建项目「${draft.project_name}」` },
+                      ]}
+                    />
+                  }
+                />
+              )}
+
+              <Space>
+                <Button
+                  type="primary"
+                  disabled={commit.isPending || !draft.title}
+                  onClick={() => commit.mutate()}
+                >
+                  添加
+                </Button>
+                {commit.isError && (
+                  <Typography.Text type="danger">{String(commit.error)}</Typography.Text>
+                )}
+              </Space>
+            </div>
+          ) : (
+            <Typography.Text type="secondary" className="mt-4 block text-xs">
+              支持简写：<code>!优先级</code> · <code>@标签</code> · <code>#项目</code> ·{" "}
+              <code>^时间</code> · <code>~提醒</code> · <code>::描述</code>
+            </Typography.Text>
           )}
         </div>
-      )}
+      </div>
     </section>
   );
 }

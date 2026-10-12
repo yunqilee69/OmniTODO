@@ -32,6 +32,8 @@ export interface TaskDto {
   tag_ids: Id[];
   tags: string[];
   has_attachments: boolean;
+  /** At least one task has this one as `parent_id` (drives list expansion). */
+  has_subtasks: boolean;
   sort_order: number;
   created_at: number;
   updated_at: number;

@@ -1,8 +1,28 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import {
+  Button,
+  Checkbox,
+  DatePicker,
+  Drawer,
+  Input,
+  Popconfirm,
+  Select,
+  Skeleton,
+  Switch,
+  Tooltip,
+  Typography,
+} from "antd";
+import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
+import dayjs from "dayjs";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, type Priority, type TaskDto, type TaskPatch } from "../api/client";
 import { qk } from "../api/queryKeys";
-import { toDateInput, toDateTimeInput, fromDateInput, fromDateTimeInput } from "../lib/dates";
+import {
+  fromDateInput,
+  fromDateTimeInput,
+  toDateInput,
+  toDateTimeInput,
+} from "../lib/dates";
 import { useTaskMutations } from "../hooks/useTaskMutations";
 import AttachmentList from "./AttachmentList";
 import MarkdownPreview from "./MarkdownPreview";
@@ -19,14 +39,14 @@ const PRIORITY_LABEL: Record<Priority, string> = {
   urgent: "紧急",
 };
 
-/** Task detail panel (design §13.2): description + preview, subtasks, tags,
+/** Task detail drawer (design §13.2): description + preview, subtasks, tags,
  *  attachments and the recurrence rule — all editing the same core commands. */
 export default function TaskDetail({
   taskId,
   onClose,
   onOpenTask,
 }: {
-  taskId: string;
+  taskId: string | null;
   onClose: () => void;
   onOpenTask: (id: string) => void;
 }) {
@@ -34,20 +54,31 @@ export default function TaskDetail({
   const { patch, toggle, remove, move } = useTaskMutations();
   const [desc, setDesc] = useState<string | null>(null);
   const [subtask, setSubtask] = useState("");
+  const [addingSubtask, setAddingSubtask] = useState(false);
   const [previewDesc, setPreviewDesc] = useState(false);
 
   const { data: task, isLoading } = useQuery({
-    queryKey: qk.task(taskId),
-    queryFn: () => api.taskGet(taskId),
+    queryKey: qk.task(taskId ?? ""),
+    queryFn: () => api.taskGet(taskId!),
+    enabled: Boolean(taskId),
   });
   const { data: subtasks } = useQuery({
     queryKey: ["subtasks", taskId],
-    queryFn: () => api.taskListSubtasks(taskId),
+    queryFn: () => api.taskListSubtasks(taskId!),
+    enabled: Boolean(taskId),
   });
   const { data: projects } = useQuery({ queryKey: qk.projects, queryFn: () => api.projectList() });
 
+  // New task selected → drop the stale description draft and close the add-subtask field.
+  useEffect(() => {
+    setDesc(null);
+    setPreviewDesc(false);
+    setSubtask("");
+    setAddingSubtask(false);
+  }, [taskId]);
+
   const addSubtask = useMutation({
-    mutationFn: (title: string) => api.taskAddSubtask(taskId, { title }),
+    mutationFn: (title: string) => api.taskAddSubtask(taskId!, { title }),
     onSuccess: () => {
       setSubtask("");
       qc.invalidateQueries({ queryKey: ["subtasks", taskId] });
@@ -56,212 +87,238 @@ export default function TaskDetail({
     },
   });
 
-  if (isLoading || !task) {
-    return <Panel onClose={onClose}><p className="text-sm text-neutral-500">加载中…</p></Panel>;
-  }
-
-  const commit = (p: TaskPatch) => patch.mutate({ id: task.id, patch: p });
-  const description = desc ?? task.description ?? "";
-  const dirtyDesc = desc !== null && desc !== (task.description ?? "");
+  const commit = (p: TaskPatch) => task && patch.mutate({ id: task.id, patch: p });
 
   const dateValue = (ms: number | null) =>
-    ms == null ? "" : task.all_day ? toDateInput(ms, true) : toDateTimeInput(ms);
+    ms == null ? null : dayjs(task!.all_day ? toDateInput(ms, true) : toDateTimeInput(ms));
 
-  const commitDate = (field: "due_at" | "start_at", value: string) => {
-    const parsed = value === "" ? null : task.all_day ? fromDateInput(value, true) : fromDateTimeInput(value);
-    if (parsed === null) {
+  const commitDate = (field: "due_at" | "start_at", value: dayjs.Dayjs | null) => {
+    if (!value) {
       commit(field === "due_at" ? { clear_due_at: true } : { clear_start_at: true });
-    } else {
-      commit({ [field]: parsed } as TaskPatch);
+      return;
     }
+    const s = task!.all_day ? value.format("YYYY-MM-DD") : value.format("YYYY-MM-DDTHH:mm");
+    const parsed = task!.all_day ? fromDateInput(s, true) : fromDateTimeInput(s);
+    if (parsed !== null) commit({ [field]: parsed } as TaskPatch);
   };
 
-  return (
-    <Panel onClose={onClose}>
-      <div className="space-y-4">
-        <input
-          className="w-full rounded border border-transparent px-1 py-0.5 text-lg font-semibold hover:border-neutral-200 focus:border-neutral-400 focus:outline-none"
-          defaultValue={task.title}
-          onBlur={(e) => {
-            const title = e.target.value.trim();
-            if (title && title !== task.title) commit({ title });
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-          }}
-        />
+  const description = desc ?? task?.description ?? "";
+  const dirtyDesc = desc !== null && desc !== (task?.description ?? "");
 
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <label className="flex items-center gap-1">
-            <input
-              type="checkbox"
+  return (
+    <Drawer
+      open={Boolean(taskId)}
+      onClose={onClose}
+      width={400}
+      title="任务详情"
+      destroyOnHidden
+      styles={{ body: { padding: 16 } }}
+    >
+      {isLoading || !task ? (
+        <Skeleton active />
+      ) : (
+        <div className="flex flex-col gap-5">
+          <Input
+            key={task.id}
+            size="large"
+            variant="borderless"
+            defaultValue={task.title}
+            aria-label="任务标题"
+            style={{ paddingInline: 0, fontWeight: 600 }}
+            onBlur={(e) => {
+              const title = e.target.value.trim();
+              if (title && title !== task.title) commit({ title });
+            }}
+            onPressEnter={(e) => (e.target as HTMLInputElement).blur()}
+          />
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Checkbox
               checked={task.status === "done"}
               onChange={() => toggle.mutate(task)}
-            />
-            已完成
-          </label>
-          <label className="flex items-center gap-1 text-xs text-neutral-600">
-            优先级
-            <select
-              className="rounded border border-neutral-300 px-1 py-0.5"
-              value={task.priority}
-              onChange={(e) => commit({ priority: e.target.value as Priority })}
+              aria-label="标记已完成"
             >
-              {PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {PRIORITY_LABEL[p]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            className="ml-auto text-xs text-neutral-400 hover:text-red-600"
-            onClick={() => {
-              remove.mutate(task.id);
-              onClose();
-            }}
-          >
-            删除
-          </button>
-        </div>
-
-        {/* Dates */}
-        <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-          <Field label="开始">
-            <input
-              type={task.all_day ? "date" : "datetime-local"}
-              className="w-full rounded border border-neutral-300 px-1 py-0.5"
-              value={dateValue(task.start_at)}
-              onChange={(e) => commitDate("start_at", e.target.value)}
-            />
-          </Field>
-          <Field label="截止">
-            <input
-              type={task.all_day ? "date" : "datetime-local"}
-              className="w-full rounded border border-neutral-300 px-1 py-0.5"
-              value={dateValue(task.due_at)}
-              onChange={(e) => commitDate("due_at", e.target.value)}
-            />
-          </Field>
-          <Field label="全天">
-            <label className="flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={task.all_day}
-                onChange={(e) => commit({ all_day: e.target.checked })}
+              已完成
+            </Checkbox>
+            <span className="flex items-center gap-1.5 text-xs opacity-70">
+              优先级
+              <Select
+                size="small"
+                style={{ width: 84 }}
+                value={task.priority}
+                onChange={(v) => commit({ priority: v as Priority })}
+                options={PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABEL[p] }))}
               />
-              <span className="text-neutral-500">按日期存储（无时区换算）</span>
-            </label>
-          </Field>
-          <Field label="项目">
-            <select
-              className="w-full rounded border border-neutral-300 px-1 py-0.5"
-              value={task.project_id ?? ""}
-              onChange={(e) => {
-                const value = e.target.value;
-                if (value === "") move.mutate({ id: task.id, projectId: null });
-                else move.mutate({ id: task.id, projectId: value });
+            </span>
+            <Popconfirm
+              title="删除该任务？"
+              description="可在数据库中恢复（软删除）。"
+              okText="删除"
+              cancelText="取消"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => {
+                remove.mutate(task.id);
+                onClose();
               }}
             >
-              <option value="">收件箱</option>
-              {(projects ?? []).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
+              <Button danger type="text" size="small" className="ml-auto" icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </div>
 
-        {/* Description with preview */}
-        <section>
-          <header className="mb-1 flex items-center gap-2">
-            <h3 className="text-sm font-medium">描述</h3>
-            <button
-              type="button"
-              className="text-xs text-neutral-500 hover:underline"
-              onClick={() => setPreviewDesc((v) => !v)}
-            >
-              {previewDesc ? "编辑" : "预览"}
-            </button>
-            {dirtyDesc && (
-              <button
-                type="button"
-                className="text-xs text-blue-600 hover:underline"
-                onClick={() => {
-                  commit({ description: desc ?? "" });
-                  setDesc(null);
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="开始">
+              <DatePicker
+                style={{ width: "100%" }}
+                value={dateValue(task.start_at)}
+                showTime={!task.all_day}
+                onChange={(v) => commitDate("start_at", v)}
+                format={task.all_day ? "YYYY-MM-DD" : "YYYY-MM-DD HH:mm"}
+              />
+            </Field>
+            <Field label="截止">
+              <DatePicker
+                style={{ width: "100%" }}
+                value={dateValue(task.due_at)}
+                showTime={!task.all_day}
+                onChange={(v) => commitDate("due_at", v)}
+                format={task.all_day ? "YYYY-MM-DD" : "YYYY-MM-DD HH:mm"}
+              />
+            </Field>
+            <Field label="全天">
+              <Switch
+                size="small"
+                checked={task.all_day}
+                onChange={(v) => commit({ all_day: v })}
+              />
+            </Field>
+            <Field label="项目">
+              <Select
+                style={{ width: "100%" }}
+                value={task.project_id ?? ""}
+                onChange={(v) => move.mutate({ id: task.id, projectId: v === "" ? null : v })}
+                options={[
+                  { value: "", label: "收件箱" },
+                  ...(projects ?? []).map((p) => ({ value: p.id, label: p.name })),
+                ]}
+              />
+            </Field>
+          </div>
+
+          <Section
+            title="描述"
+            extra={
+              <>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EditOutlined />}
+                  onClick={() => setPreviewDesc((v) => !v)}
+                >
+                  {previewDesc ? "编辑" : "预览"}
+                </Button>
+                {dirtyDesc && (
+                  <Button
+                    type="primary"
+                    size="small"
+                    onClick={() => {
+                      commit({ description: desc ?? "" });
+                      setDesc(null);
+                    }}
+                  >
+                    保存
+                  </Button>
+                )}
+              </>
+            }
+          >
+            {previewDesc ? (
+              <div className="rounded-md border border-[var(--border-hairline)] p-3">
+                <MarkdownPreview source={description} />
+              </div>
+            ) : (
+              <Input.TextArea
+                autoSize={{ minRows: 4, maxRows: 12 }}
+                placeholder="支持 Markdown，可切换到预览"
+                value={description}
+                onChange={(e) => setDesc(e.target.value)}
+                onBlur={() => {
+                  if (dirtyDesc) {
+                    commit({ description: desc ?? "" });
+                    setDesc(null);
+                  }
                 }}
-              >
-                保存
-              </button>
+              />
             )}
-          </header>
-          {previewDesc ? (
-            <div className="rounded border border-neutral-200 p-2">
-              <MarkdownPreview source={description} />
-            </div>
-          ) : (
-            <textarea
-              className="h-32 w-full rounded border border-neutral-300 p-2 text-sm"
-              placeholder="支持 Markdown，可切换到预览"
-              value={description}
-              onChange={(e) => setDesc(e.target.value)}
-              onBlur={() => {
-                if (dirtyDesc) {
-                  commit({ description: desc ?? "" });
-                  setDesc(null);
-                }
-              }}
-            />
-          )}
-        </section>
+          </Section>
 
-        <section>
-          <h3 className="mb-1 text-sm font-medium">重复</h3>
-          <RecurrenceEditor task={task} onPatch={commit} />
-        </section>
+          <Section title="重复">
+            <RecurrenceEditor task={task} onPatch={commit} />
+          </Section>
 
-        <section>
-          <h3 className="mb-1 text-sm font-medium">标签</h3>
-          <TagPicker task={task} onPatch={commit} />
-        </section>
+          <Section title="标签">
+            <TagPicker task={task} onPatch={commit} />
+          </Section>
 
-        <section>
-          <h3 className="mb-1 text-sm font-medium">附件</h3>
-          <AttachmentList task={task} />
-        </section>
+          <Section title="附件">
+            <AttachmentList task={task} />
+          </Section>
 
-        <section>
-          <h3 className="mb-1 text-sm font-medium">
-            子任务 {subtasks && subtasks.length > 0 ? `(${subtasks.length})` : ""}
-          </h3>
-          <ul className="divide-y divide-neutral-100 rounded border border-neutral-200">
-            {(subtasks ?? []).map((s) => (
-              <SubtaskRow key={s.id} task={s} onOpen={onOpenTask} />
-            ))}
-            {(subtasks ?? []).length === 0 && (
-              <li className="px-3 py-2 text-xs text-neutral-400">暂无子任务</li>
+          <Section
+            title={`子任务${subtasks && subtasks.length > 0 ? `（${subtasks.length}）` : ""}`}
+            extra={
+              !addingSubtask && (
+                <Tooltip title="添加子任务">
+                  <Button
+                    type="text"
+                    size="small"
+                    aria-label="添加子任务"
+                    icon={<PlusOutlined />}
+                    onClick={() => setAddingSubtask(true)}
+                  />
+                </Tooltip>
+              )
+            }
+          >
+            <ul className="mb-2 divide-y divide-[var(--border-hairline)] overflow-hidden rounded-md border border-[var(--border-hairline)]">
+              {(subtasks ?? []).map((s) => (
+                <SubtaskRow key={s.id} task={s} onOpen={onOpenTask} />
+              ))}
+              {(subtasks ?? []).length === 0 && (
+                <li className="px-3 py-2 text-xs opacity-60">暂无子任务</li>
+              )}
+            </ul>
+            {addingSubtask && (
+              <Input
+                size="small"
+                autoFocus
+                placeholder="子任务标题，回车确认（Esc 取消）"
+                value={subtask}
+                onChange={(e) => setSubtask(e.target.value)}
+                onPressEnter={() => subtask.trim() && addSubtask.mutate(subtask.trim())}
+                onBlur={() => !subtask.trim() && setAddingSubtask(false)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setSubtask("");
+                    setAddingSubtask(false);
+                  }
+                }}
+              />
             )}
-          </ul>
-          <input
-            className="mt-2 w-full rounded border border-neutral-300 px-2 py-1 text-sm"
-            placeholder="添加子任务，回车确认"
-            value={subtask}
-            onChange={(e) => setSubtask(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && subtask.trim()) addSubtask.mutate(subtask.trim());
-            }}
-          />
-        </section>
+          </Section>
 
-        <footer className="border-t border-neutral-100 pt-2 text-[11px] text-neutral-400">
-          创建 {new Date(task.created_at).toLocaleString()} · 更新{" "}
-          {new Date(task.updated_at).toLocaleString()} · v{task.version}
-        </footer>
-      </div>
-    </Panel>
+          <Typography.Text
+            type="secondary"
+            className="tabular font-mono-ui text-[11px]"
+            style={{ borderTop: "1px solid var(--border-hairline)", paddingTop: 12 }}
+          >
+            创建 {new Date(task.created_at).toLocaleString()} · 更新{" "}
+            {new Date(task.updated_at).toLocaleString()} · v{task.version}
+          </Typography.Text>
+        </div>
+      )}
+    </Drawer>
   );
 }
 
@@ -280,24 +337,30 @@ function SubtaskRow({ task, onOpen }: { task: TaskDto; onOpen: (id: string) => v
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
-      <div className="mb-0.5 text-neutral-500">{label}</div>
+      <div className="mb-1 text-[11px] opacity-60">{label}</div>
       {children}
     </div>
   );
 }
 
-function Panel({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+function Section({
+  title,
+  extra,
+  children,
+}: {
+  title: string;
+  extra?: ReactNode;
+  children: ReactNode;
+}) {
   return (
-    <aside className="flex w-96 shrink-0 flex-col overflow-auto border-l border-neutral-200 bg-white p-4">
-      <button
-        type="button"
-        className="mb-2 self-end text-xs text-neutral-400 hover:text-neutral-700"
-        onClick={onClose}
-        aria-label="关闭详情"
-      >
-        关闭 ✕
-      </button>
+    <section>
+      <div className="mb-2 flex items-center gap-1">
+        <Typography.Text strong className="text-small">
+          {title}
+        </Typography.Text>
+        {extra && <div className="ml-auto flex items-center gap-1">{extra}</div>}
+      </div>
       {children}
-    </aside>
+    </section>
   );
 }

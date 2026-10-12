@@ -2,6 +2,7 @@
 
 跨平台、本地优先的桌面待办应用。设计说明见
 [`2026-10-12-todo-desktop-design.md`](./2026-10-12-todo-desktop-design.md)，
+视觉规范见 [`DESIGN.md`](./DESIGN.md)，
 实现进度见 [`docs/implementation-status.md`](./docs/implementation-status.md)。
 
 数据落在本机单个 SQLite 文件，无账号、无服务端即可完整使用；对外通过一个
@@ -15,10 +16,24 @@ crates/
   omnitodo-cli/    # headless CLI：冒烟测试、脚本、维护命令（bin: omnitodo）
   omnitodo-mcp/    # 独立 MCP server：stdio + streamable HTTP（bin: omnitodo-mcp）
 omnitodo-desktop/  # Tauri 2 桌面壳（需 WebView 系统库，独立构建，见下）
-ui/                # React 19 + TS + Vite 前端
+ui/                # React 19 + TS + Vite 前端（组件层 Ant Design v6）
 docs/              # 实现进度、打包说明
 scripts/           # check.sh、图标生成、侧车构建、打包
 ```
+
+## 前端
+
+组件层用 **Ant Design v6**，但不是 antd 默认观感：配色、圆角、字体等按
+[`DESIGN.md`](./DESIGN.md)（「静默工坊」）通过 `ConfigProvider` 的 `theme` 令牌注入
+（映射见 `ui/src/theme/antd.ts`），明/暗/跟随系统三态同时驱动 antd 的
+`defaultAlgorithm`/`darkAlgorithm` 与自留的 `[data-theme]` CSS 变量。
+
+行为库各司其职：`@tanstack/react-query`（服务端状态）、`zustand`（UI 状态）、
+`react-router-dom`（路由）、`@dnd-kit`（拖拽排序与日历改期）、
+`@tanstack/react-virtual`（超过 60 行才开窗）、`i18next`。字体自托管
+（Fraunces 展示体 + IBM Plex Sans/Mono，中文回退系统字体）。
+日历网格与列表容器是两处刻意的自绘（antd `Calendar`/`List` 会丢跨格拖拽与虚拟化），
+理由见 `DESIGN.md` §15。
 
 ## 构建与测试（headless）
 

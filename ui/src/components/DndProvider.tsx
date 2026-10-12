@@ -19,6 +19,7 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { useQueryClient } from "@tanstack/react-query";
+import { Card } from "antd";
 import { useState, type ReactNode } from "react";
 import { api, type Page, type TaskDto } from "../api/client";
 import { qk } from "../api/queryKeys";
@@ -113,9 +114,9 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
       {children}
       <DragOverlay dropAnimation={null}>
         {draggingTask ? (
-          <div className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm shadow">
+          <Card size="small" className="cursor-grabbing shadow-lg">
             {draggingTask.title}
-          </div>
+          </Card>
         ) : null}
       </DragOverlay>
     </DndContext>
