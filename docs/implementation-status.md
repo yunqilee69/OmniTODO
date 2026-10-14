@@ -88,7 +88,7 @@ scripts/smoke-gui-xvfb.sh --bin /usr/bin/omnitodo-desktop \
 | 项 | 怎么验的 | 结果 |
 |---|---|---|
 | 窗口真能起、页面不白 | `open OmniTODO.app`，抓窗口 | 侧栏（搜索框 / 六条入口 / 项目 / 标签计数）与 Inbox 空态正常渲染，中文无豆腐块 |
-| 数据真能显示 | 先用 CLI 往默认库（`~/Library/Application Support/OmniTODO/omnitodo.db`）灌 1 项目 + 3 任务（含重复规则与标签），再启动应用 | 侧栏出现「工作 2」「#汇报 1」「#设计 1」，Inbox 只列未归档的 `评审设计稿`（项目内任务不出现），优先级色块与截止文案正确 |
+| 数据真能显示 | 先用 CLI 往默认库（`~/.omnitodo/omnitodo.db`）灌 1 项目 + 3 任务（含重复规则与标签），再启动应用 | 侧栏出现「工作 2」「#汇报 1」「#设计 1」，Inbox 只列未归档的 `评审设计稿`（项目内任务不出现），优先级色块与截止文案正确 |
 | 详情面板 | 由 deep-link 打开指定任务 | 标题 / 已完成 / 优先级 / 开始 / 截止 / 全天 / 项目 / 描述(Markdown) / 重复 / 标签 / 附件 各控件齐全 |
 | deep-link 真能聚焦 | `open "omnitodo://task/<id>"` | 详情面板打开并聚焦到该任务；**进程数仍为 1**（`single-instance` 把第二个进程的 URL 转交给既有窗口） |
 

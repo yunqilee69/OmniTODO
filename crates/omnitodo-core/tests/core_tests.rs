@@ -315,6 +315,92 @@ async fn subtasks_depth_and_listing() {
 }
 
 #[tokio::test]
+async fn subtask_progress_rolls_up_the_whole_subtree() {
+    let (core, _d) = core().await;
+    let root = core
+        .create_task(CreateTaskInput {
+            title: "root".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let child = core
+        .add_subtask(
+            &root.id,
+            CreateTaskInput {
+                title: "child".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let grand = core
+        .add_subtask(
+            &child.id,
+            CreateTaskInput {
+                title: "grand".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // The row shows counts for the branch expanding reveals, not just the
+    // direct children: root answers for both of its descendants.
+    let dto = core.get_task(&root.id).await.unwrap();
+    assert_eq!((dto.subtask_done, dto.subtask_total), (0, 2));
+    assert_eq!(core.get_task(&child.id).await.unwrap().subtask_total, 1);
+    // A leaf reports zero and draws no progress line.
+    let leaf = core.get_task(&grand.id).await.unwrap();
+    assert_eq!((leaf.subtask_done, leaf.subtask_total), (0, 0));
+    assert!(!leaf.has_subtasks);
+
+    // Ticking a grandchild moves every ancestor's counter by one.
+    core.complete_task(&grand.id).await.unwrap();
+    let dto = core.get_task(&root.id).await.unwrap();
+    assert_eq!((dto.subtask_done, dto.subtask_total), (1, 2));
+    assert_eq!(core.get_task(&child.id).await.unwrap().subtask_done, 1);
+
+    // A cancelled child reads as ticked, the same rule the row checkbox uses,
+    // so the parent can still reach 2/2.
+    core.update_task(
+        &child.id,
+        TaskPatch {
+            status: Some(Status::Cancelled),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let dto = core.get_task(&root.id).await.unwrap();
+    assert_eq!((dto.subtask_done, dto.subtask_total), (2, 2));
+
+    // The list path agrees with the single-task path.
+    let listed = core
+        .list_tasks(&TaskFilter {
+            root_only: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        (listed.items[0].subtask_done, listed.items[0].subtask_total),
+        (2, 2)
+    );
+    // ...and so does the subtree path.
+    let subs = core.list_subtasks(&root.id).await.unwrap();
+    let by_id: std::collections::HashMap<_, _> =
+        subs.iter().map(|s| (s.id.clone(), s.subtask_total)).collect();
+    assert_eq!(by_id[&child.id], 1);
+    assert_eq!(by_id[&grand.id], 0);
+
+    // Soft-deleting a subtask drops it from the roll-up.
+    core.delete_task(&grand.id).await.unwrap();
+    let dto = core.get_task(&root.id).await.unwrap();
+    assert_eq!((dto.subtask_done, dto.subtask_total), (1, 1));
+}
+
+#[tokio::test]
 async fn delete_project_cascades_to_tasks() {
     let (core, _d) = core().await;
     let p = core
@@ -392,7 +478,7 @@ async fn attachments_blob_managed_and_gc() {
     assert_eq!(core.attachment_data(&a1.id).await.unwrap(), b"hello world");
     assert_eq!(a1.sha256.as_deref().unwrap().len(), 64);
 
-    // Managed: file lands under .omnitodo/attachments and is content-addressed.
+    // Managed: file lands under <data_dir>/attachments and is content-addressed.
     let src = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(src.path(), b"managed payload").unwrap();
     let a2 = core.add_managed(&t.id, src.path()).await.unwrap();

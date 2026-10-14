@@ -103,8 +103,9 @@ cargo run -p omnitodo-cli -- export --format json
 `--project` 收项目名或 id；`--due` / `--start` 收 `2026-10-12`、`2026-10-12 18:30`、
 `明天 下午3点`、`+3d` 或原始毫秒。纯日期按全天存（UTC 零点，不做时区换算）。
 
-数据目录（可用 `--db` 覆盖）：Windows `%APPDATA%\OmniTODO\`、macOS
-`~/Library/Application Support/OmniTODO/`、Linux `~/.local/share/omnitodo/`。
+数据目录（可用 `--db` 覆盖，或用 `OMNITODO_DATA_DIR` 覆盖整目录）：所有平台统一为
+`~/.omnitodo/`（Windows 即 `%USERPROFILE%\.omnitodo\`）。托管附件在其下的
+`~/.omnitodo/attachments/`。
 
 ## MCP Server
 

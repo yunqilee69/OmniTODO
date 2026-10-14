@@ -217,11 +217,27 @@ pub struct TaskDto {
     pub has_attachments: bool,
     /// At least one task has this one as its `parent_id`. Drives the list's
     /// expand/collapse affordance; the drawer shows the whole subtree.
+    /// Equivalent to `subtask_total > 0` — the bool is kept because the row only
+    /// needs to know whether to draw a caret, not how big the branch is.
     pub has_subtasks: bool,
+    /// Descendants already ticked, rolled up over the whole subtree at any
+    /// depth — the branch that expanding the row reveals, so `done/total` on
+    /// the row can never disagree with the children it shows. `done` and
+    /// `cancelled` both count as ticked, matching the row's checkbox.
+    pub subtask_done: i64,
+    /// Every descendant in the subtree; soft-deleted ones are excluded.
+    pub subtask_total: i64,
     pub sort_order: i64,
     pub created_at: i64,
     pub updated_at: i64,
     pub version: i64,
+}
+
+/// Subtree roll-up for one task: how much of the branch is ticked.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SubtaskProgress {
+    pub done: i64,
+    pub total: i64,
 }
 
 impl TaskDto {
@@ -230,7 +246,7 @@ impl TaskDto {
         tag_ids: Vec<Id>,
         tags: Vec<String>,
         has_attachments: bool,
-        has_subtasks: bool,
+        progress: SubtaskProgress,
     ) -> Self {
         TaskDto {
             id: t.id.clone(),
@@ -255,7 +271,9 @@ impl TaskDto {
             tag_ids,
             tags,
             has_attachments,
-            has_subtasks,
+            has_subtasks: progress.total > 0,
+            subtask_done: progress.done,
+            subtask_total: progress.total,
             sort_order: t.sort_order,
             created_at: t.created_at,
             updated_at: t.updated_at,

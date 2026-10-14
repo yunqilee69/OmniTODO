@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::clock::now_ms;
 use crate::config;
 use crate::db;
-use crate::domain::Id;
+use crate::domain::{Id, SubtaskProgress};
 use crate::error::Result;
 
 pub mod attachment;
@@ -232,29 +232,45 @@ impl Core {
         Ok(set)
     }
 
-    // -- subtask flag -------------------------------------------------------
+    // -- subtask roll-up ----------------------------------------------------
 
-    /// Subset of `task_ids` that have at least one child, i.e. the ones whose row
-    /// gets an expand affordance in the list.
-    pub async fn tasks_with_subtasks(&self, task_ids: &[Id]) -> Result<HashSet<Id>> {
-        let mut set = HashSet::new();
+    /// Ticked / total descendant counts per task, walking the whole subtree at
+    /// any depth. A task with no children is simply absent from the map, so
+    /// callers default to zero.
+    ///
+    /// The walk mirrors `list_subtasks`, so a row's `done/total` counts exactly
+    /// the branch that expanding it reveals. Both `done` and `cancelled` count
+    /// as ticked — the rule the row checkbox already uses, which keeps a parent
+    /// from sitting one short of complete because a child was cancelled.
+    pub async fn subtask_progress(&self, task_ids: &[Id]) -> Result<HashMap<Id, SubtaskProgress>> {
+        let mut map = HashMap::new();
         if task_ids.is_empty() {
-            return Ok(set);
+            return Ok(map);
         }
         for chunk in task_ids.chunks(400) {
             let placeholders = vec!["?"; chunk.len()].join(",");
             let sql = format!(
-                "SELECT DISTINCT parent_id FROM tasks WHERE deleted_at IS NULL AND parent_id IN ({placeholders})"
+                "WITH RECURSIVE sub(root_id, id, status) AS ( \
+                   SELECT parent_id, id, status FROM tasks \
+                     WHERE deleted_at IS NULL AND parent_id IN ({placeholders}) \
+                   UNION \
+                   SELECT sub.root_id, t.id, t.status FROM tasks t \
+                     JOIN sub ON t.parent_id = sub.id WHERE t.deleted_at IS NULL \
+                 ) \
+                 SELECT root_id, \
+                        SUM(CASE WHEN status IN ('done', 'cancelled') THEN 1 ELSE 0 END), \
+                        COUNT(*) \
+                 FROM sub GROUP BY root_id"
             );
-            let mut q = sqlx::query_as::<_, (String,)>(&sql);
+            let mut q = sqlx::query_as::<_, (String, i64, i64)>(&sql);
             for id in chunk {
                 q = q.bind(id);
             }
-            for (id,) in q.fetch_all(&self.pool).await? {
-                set.insert(id);
+            for (root, done, total) in q.fetch_all(&self.pool).await? {
+                map.insert(root, SubtaskProgress { done, total });
             }
         }
-        Ok(set)
+        Ok(map)
     }
 
     // -- full text search maintenance --------------------------------------
