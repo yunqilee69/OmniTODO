@@ -3,7 +3,7 @@
 //! Kept apart from the components so each view's query shape is testable and the
 //! query keys stay stable.
 
-import type { TaskFilter } from "../api/client";
+import type { Sort, TaskFilter } from "../api/client";
 import { addDays, endOfLocalDay } from "./dates";
 
 export const DEFAULT_LIMIT = 200;
@@ -42,14 +42,18 @@ export function upcomingFilter(now = Date.now(), limit = DEFAULT_LIMIT): TaskFil
   };
 }
 
-/** A project's tasks, in the user's manual order (drag-sort friendly). */
+/**
+ * A project's tasks. Defaults to the user's manual order (drag-sort friendly);
+ * the project's display settings can swap in a computed order instead, which
+ * also turns dragging off.
+ */
 export function projectFilter(
   projectId: string,
-  opts: { includeCompleted?: boolean; limit?: number } = {},
+  opts: { includeCompleted?: boolean; sort?: Sort; limit?: number } = {},
 ): TaskFilter {
   return {
     project_ids: [projectId],
-    sort: "manual",
+    sort: opts.sort ?? "manual",
     limit: opts.limit ?? DEFAULT_LIMIT,
     root_only: true,
     include_completed: opts.includeCompleted ?? true,

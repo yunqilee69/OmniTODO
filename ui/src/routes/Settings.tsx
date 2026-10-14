@@ -23,7 +23,9 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 import { api, type ExportFormat, type ImportFormat, type TaskFilter } from "../api/client";
 import { qk } from "../api/queryKeys";
+import PageContent from "../components/PageContent";
 import PageHeader from "../components/PageHeader";
+import { useSetting } from "../hooks/useSetting";
 import { persistTheme } from "../lib/theme";
 import { useUiStore, type Theme } from "../stores/ui";
 
@@ -34,39 +36,20 @@ export default function Settings() {
   return (
     <section className="flex h-full min-h-0 flex-col">
       <PageHeader title="设置" />
-      <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
-        <Flex vertical gap={16} style={{ maxWidth: 760 }}>
+      <PageContent>
+        <Flex vertical gap={16}>
           <General />
           <Reminders />
           <McpPanel />
           <DataPanel />
           <About />
         </Flex>
-      </div>
+      </PageContent>
     </section>
   );
 }
 
 /** Small typed wrapper around `settings_get` / `settings_set`. */
-function useSetting<T>(key: string, fallback: T) {
-  const qc = useQueryClient();
-  const query = useQuery({
-    queryKey: ["settings", key],
-    queryFn: async () => {
-      const value = await api.settingsGet(key);
-      return value == null ? fallback : (value as T);
-    },
-  });
-  const set = useMutation({
-    mutationFn: (value: T) => api.settingsSet(key, value),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["settings", key] });
-      qc.invalidateQueries({ queryKey: qk.mcp("httpState") });
-    },
-  });
-  return { value: query.data ?? fallback, set: set.mutate };
-}
-
 function General() {
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
@@ -307,7 +290,7 @@ function McpPanel() {
           </Space>
           <Typography.Text type="secondary" className="text-[11px]">
             开启后 AI 客户端可创建/修改/删除任务与项目；所有写入都会记录到 `op_log`，可在数据库
-            `.omnitodo/omnitodo.db` 审计。关闭时 MCP 为只读。
+            `~/.omnitodo/omnitodo.db` 审计。关闭时 MCP 为只读。
           </Typography.Text>
         </Space>
       </Flex>

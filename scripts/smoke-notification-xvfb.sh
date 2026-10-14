@@ -45,7 +45,7 @@ home="$(mktemp -d /tmp/omnitodo-notify-XXXXXX)"
 mkdir -p "$out"
 rm -f "$out"/*.png "$out"/*.log
 export HOME="$home"
-db="$HOME/.local/share/omnitodo/omnitodo.db"
+db="$HOME/.omnitodo/omnitodo.db"
 
 echo "==> seeding a task whose reminder is already due ($db)"
 "$cli" init >/dev/null

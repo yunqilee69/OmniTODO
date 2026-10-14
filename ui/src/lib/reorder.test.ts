@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyOrder, moveItem, reorderByDrag } from "./reorder";
+import { applyOrder, moveItem, reorderByDrag, reorderSubsequence } from "./reorder";
 
 const items = [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }];
 
@@ -31,6 +31,30 @@ describe("reorderByDrag", () => {
     expect(reorderByDrag(items, "a", null)).toBeNull();
     // Dropped on a row from another list.
     expect(reorderByDrag(items, "a", "zzz")).toBeNull();
+  });
+});
+
+describe("reorderSubsequence", () => {
+  // A subtask branch is cached flat and depth-first, so a sibling group is
+  // interleaved with its own descendants: the group's slots move, the
+  // descendants stay right where they are under their parent.
+  const branch = [
+    { id: "a" },
+    { id: "a1" },
+    { id: "b" },
+    { id: "a2" },
+    { id: "c" },
+  ];
+
+  it("reorders a sibling group in place", () => {
+    const out = reorderSubsequence(branch, ["a", "c", "b"]);
+    expect(out.map((i) => i.id)).toEqual(["a", "a1", "c", "a2", "b"]);
+  });
+
+  it("leaves the list alone for an unchanged order", () => {
+    expect(reorderSubsequence(branch, ["a", "b", "c"]).map((i) => i.id)).toEqual(
+      branch.map((i) => i.id),
+    );
   });
 });
 

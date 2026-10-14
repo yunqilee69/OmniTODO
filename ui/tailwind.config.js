@@ -27,6 +27,13 @@ export default {
         title: ["18px", { lineHeight: "1.3" }],
         display: ["24px", { lineHeight: "1.2" }],
       },
+      // Elevation tokens (DESIGN §5.4). The values live in index.css so the
+      // light/dark pair stays in one place; `shadow-e3` etc. resolve to them.
+      boxShadow: {
+        e1: "var(--e1)",
+        e2: "var(--e2)",
+        e3: "var(--e3)",
+      },
     },
   },
   plugins: [],

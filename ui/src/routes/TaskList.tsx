@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import PageContent from "../components/PageContent";
 import PageHeader from "../components/PageHeader";
 import TaskList from "../components/TaskList";
 import { inboxFilter, todayFilter, upcomingFilter } from "../lib/filter";
@@ -28,9 +29,9 @@ export default function TaskListView({ title, variant }: { title: string; varian
   return (
     <section className="flex h-full min-h-0 flex-col">
       <PageHeader title={title} />
-      <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
+      <PageContent taskList>
         <TaskList filter={filter} onOpenTask={selectTask} emptyHint={EMPTY_HINT[variant]} />
-      </div>
+      </PageContent>
     </section>
   );
 }

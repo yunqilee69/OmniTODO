@@ -7,16 +7,23 @@ interface UiState {
   filter: TaskFilter;
   selectedTaskId: string | null;
   theme: Theme;
+  /** Whether the floating quick-add panel is showing. */
+  quickAddOpen: boolean;
   setFilter: (filter: TaskFilter) => void;
   selectTask: (id: string | null) => void;
   setTheme: (theme: Theme) => void;
+  openQuickAdd: () => void;
+  closeQuickAdd: () => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
   filter: { sort: "createddesc", limit: 200 },
   selectedTaskId: null,
   theme: "system",
+  quickAddOpen: false,
   setFilter: (filter) => set({ filter }),
   selectTask: (id) => set({ selectedTaskId: id }),
   setTheme: (theme) => set({ theme }),
+  openQuickAdd: () => set({ quickAddOpen: true }),
+  closeQuickAdd: () => set({ quickAddOpen: false }),
 }));

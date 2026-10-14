@@ -14,7 +14,9 @@ export default function SortableTaskRow(props: TaskRowProps) {
     <TaskRow
       {...props}
       innerRef={setNodeRef}
-      className={isDragging ? "opacity-50" : ""}
+      // `is-dragging` keeps the hover-only handle showing for the whole drag,
+      // not just while the pointer happens to be over the row.
+      className={isDragging ? "is-dragging opacity-50" : ""}
       style={{
         transform: CSS.Transform.toString(transform),
         transition: transition ?? undefined,
@@ -24,8 +26,14 @@ export default function SortableTaskRow(props: TaskRowProps) {
           type="text"
           size="small"
           aria-label="拖动排序"
-          className="cursor-grab opacity-0 group-hover:opacity-100 active:cursor-grabbing"
-          style={{ color: "inherit" }}
+          className="row-action cursor-grab active:cursor-grabbing"
+          style={{
+            padding: 0,
+            width: 16,
+            height: 16,
+            minWidth: 16,
+            color: "var(--text-tertiary)",
+          }}
           icon={<HolderOutlined />}
           {...attributes}
           {...listeners}

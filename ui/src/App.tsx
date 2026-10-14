@@ -3,21 +3,23 @@ import { listen } from "@tauri-apps/api/event";
 import { App as AntApp, Button, ConfigProvider, Input, Layout, Tooltip } from "antd";
 import {
   MoonOutlined,
+  PlusOutlined,
   SearchOutlined,
+  SettingOutlined,
   SunOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import zhCN from "antd/locale/zh_CN";
-import { Route, Routes, useNavigate } from "react-router-dom";
+import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api/client";
 import { TaskDndProvider } from "./components/DndProvider";
 import NavMenu from "./components/NavMenu";
+import QuickAddPanel from "./components/QuickAddPanel";
 import ReminderToasts from "./components/ReminderToasts";
 import TaskDetail from "./components/TaskDetail";
 import { applyTheme, isTheme, persistTheme, subscribeSystemTheme, useResolvedTheme } from "./lib/theme";
 import Calendar from "./routes/Calendar";
 import ProjectView from "./routes/ProjectView";
-import QuickAdd from "./routes/QuickAdd";
 import SearchView from "./routes/SearchView";
 import Settings from "./routes/Settings";
 import TagView from "./routes/TagView";
@@ -27,14 +29,16 @@ import { useUiStore } from "./stores/ui";
 
 /** App shell (design §13): one `DndContext` wraps the sidebar and the main pane
  *  so a task can be dragged from a list onto a project. antd's `ConfigProvider`
- *  carries the DESIGN.md token palette; the detail panel is a right-hand Drawer. */
+ *  carries the DESIGN.md token palette; the detail panel is a centred modal. */
 export default function App() {
   const resolved = useResolvedTheme();
   const selectedTaskId = useUiStore((s) => s.selectedTaskId);
   const selectTask = useUiStore((s) => s.selectTask);
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
+  const openQuickAdd = useUiStore((s) => s.openQuickAdd);
   const navigate = useNavigate();
+  const location = useLocation();
   const [term, setTerm] = useState("");
 
   const submitSearch = (value: string) => {
@@ -68,13 +72,12 @@ export default function App() {
     void persistTheme(next);
   };
 
-  // The global shortcut (Ctrl+Shift+Space) and the tray's quick-add item emit
-  // this; the app has one window, so "唤起快捷添加窗" means jumping to the
-  // quick-add route (design §12).
+  // The global shortcut (CmdOrCtrl+Shift+Space) and the tray's quick-add item
+  // emit this; both raise the floating quick-add panel (design §12).
   useEffect(() => {
     let un: (() => void) | undefined;
     let disposed = false;
-    listen("quickadd:open", () => navigate("/quickadd"))
+    listen("quickadd:open", () => openQuickAdd())
       .then((u) => {
         if (disposed) u();
         else un = u;
@@ -84,7 +87,7 @@ export default function App() {
       disposed = true;
       un?.();
     };
-  }, [navigate]);
+  }, [openQuickAdd]);
 
   // `omnitodo://task/<id>` — clicking a reminder notification, or an MCP client
   // following the resource URI, focuses that task (design §9 / §11).
@@ -125,6 +128,9 @@ export default function App() {
                     OmniTODO
                   </span>
                 </div>
+                <Button type="primary" block icon={<PlusOutlined />} onClick={openQuickAdd}>
+                  添加任务
+                </Button>
                 <Input
                   prefix={<SearchOutlined />}
                   placeholder="搜索…（回车）"
@@ -135,7 +141,18 @@ export default function App() {
                 />
                 <NavMenu />
                 <div className="flex items-center justify-between px-1 pt-1">
-                  <span className="text-micro opacity-60">本地优先</span>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<SettingOutlined />}
+                    aria-current={location.pathname === "/settings" ? "page" : undefined}
+                    className={
+                      location.pathname === "/settings" ? "text-[var(--accent-ink)]" : undefined
+                    }
+                    onClick={() => navigate("/settings")}
+                  >
+                    设置
+                  </Button>
                   <Tooltip title="切换明暗主题">
                     <Button
                       type="text"
@@ -159,7 +176,6 @@ export default function App() {
                     element={<TaskListView title="即将到来" variant="upcoming" />}
                   />
                   <Route path="/calendar" element={<Calendar />} />
-                  <Route path="/quickadd" element={<QuickAdd />} />
                   <Route path="/search" element={<SearchView />} />
                   <Route path="/project/:id" element={<ProjectView />} />
                   <Route path="/tag/:id" element={<TagView />} />
@@ -174,6 +190,7 @@ export default function App() {
               onOpenTask={selectTask}
             />
           </Layout>
+          <QuickAddPanel />
           <ReminderToasts />
         </TaskDndProvider>
       </AntApp>

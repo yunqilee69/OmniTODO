@@ -139,19 +139,20 @@ MCP 的 stdio 传输要求**客户端自己拉起子进程**（Cursor / Claude D
 
 ### 4.4 目录与文件布局
 
-按平台用 `directories` crate 解析应用数据目录：
+数据目录统一放在用户主目录下的隐藏目录 `~/.omnitodo/`（**不区分平台**）：
 
 | 平台 | DB 目录 |
 |---|---|
-| Windows | `%APPDATA%\OmniTODO\` |
-| macOS | `~/Library/Application Support/OmniTODO/` |
-| Linux | `$XDG_DATA_HOME/omnitodo/`（默认 `~/.local/share/omnitodo/`） |
+| Windows | `%USERPROFILE%\.omnitodo\`（即 `C:\Users\<你>\.omnitodo\`） |
+| macOS | `~/.omnitodo/` |
+| Linux | `~/.omnitodo/` |
+
+> `OMNITODO_DATA_DIR` 可覆盖整目录（测试与 headless CLI/MCP 用），`--db` 可单独覆盖 DB 路径。
 
 ```
-OmniTODO/                     # 应用数据目录（见上表）
+.omnitodo/                    # 应用数据目录（见上表）
 ├── omnitodo.db             # SQLite（WAL 伴生 omnitodo.db-wal / -shm）；blob 模式附件的二进制在库内
-├── .omnitodo/
-│   └── attachments/        # managed 模式附件的托管目录：ab/cd/<sha256> 内容寻址
+├── attachments/            # managed 模式附件的托管目录：ab/cd/<sha256> 内容寻址
 ├── logs/
 └── config.json             # MCP 端口/token、内部控制端点端口/token 等"启动前就要读到"的运行时配置
 ```
@@ -597,7 +598,7 @@ upcoming_list[TaskDto]
 
 ```
 # stdio（给 Cursor / Claude Desktop；每个客户端各起一个实例）
-omnitodo-mcp --db "<appdata>/OmniTODO/omnitodo.db"       # 默认只读
+omnitodo-mcp --db "~/.omnitodo/omnitodo.db"              # 默认只读
 
 # HTTP（常驻服务，供脚本/多工具共用）
 omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
@@ -607,7 +608,7 @@ omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 
 ```json
 { "mcpServers": { "omnitodo": { "command": "omnitodo-mcp",
-  "args": ["--db", "/Users/me/Library/Application Support/OmniTODO/omnitodo.db"] } } }
+  "args": ["--db", "/Users/me/.omnitodo/omnitodo.db"] } } }
 ```
 
 ### 11.2 stdio 与 HTTP 可同时启用（不存在"模式切换"）
@@ -744,7 +745,7 @@ omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 - 任务行内快速完成（乐观更新）、优先级/日期就地编辑。
 - 任务详情面板：Markdown 描述（textarea + 预览，v1 不引富文本编辑器）、子任务清单、标签选择、附件（**拖入即上传**，默认存库为 BLOB，可切托管文件；超限时提示）、重复规则编辑器。
 - `dnd-kit` 支持同列表排序与跨项目/跨父级拖拽。
-- 快捷添加窗：全局快捷键唤起，使用 §12 简写语法，实时解析预览；`#项目` 歧义时弹选择框。
+- 快捷添加：侧栏「添加任务」按钮或全局快捷键唤起一个**悬浮输入框**（左「＋」字段菜单 / 中任务名称 / 右「×」关闭，不含 AI 区）；「＋」菜单逐条列出简写字段并在右侧给出该字段的简写示例，点选即在光标处插入 token。使用 §12 简写语法并实时解析预览；`#项目` 歧义时弹选择框。回车落库，Esc / 点击面板外关闭。
 
 ### 13.3 Query key 约定（示例）
 

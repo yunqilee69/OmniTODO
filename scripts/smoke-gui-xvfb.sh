@@ -53,7 +53,7 @@ mkdir -p "$out"
 rm -f "$out"/*.png
 export HOME="$home"
 
-db="$HOME/.local/share/omnitodo/omnitodo.db"
+db="$HOME/.omnitodo/omnitodo.db"
 
 echo "==> seeding fixtures ($db)"
 "$cli" init >/dev/null
@@ -106,10 +106,13 @@ PY
 
 # Hit points read off the rendered layout (the window is 1100x720 at 0,0), in
 # sidebar order. Exported so the child shell below can name them.
+# The 添加任务 primary button sits between the wordmark and the search box, so
+# everything below it in the sidebar flow is shifted down by one control (32) +
+# one gap (12) = 44px versus the layout before it existed.
 export NAV_X=60
-export NAV_Y_INBOX=108 NAV_Y_TODAY=136 NAV_Y_CALENDAR=192 NAV_Y_QUICKADD=220 NAV_Y_SETTINGS=248
-export PROJECT_X=100 PROJECT_Y=320
-export SEARCH_X=120 SEARCH_Y=68
+export NAV_Y_ADD=68 NAV_Y_INBOX=152 NAV_Y_TODAY=180 NAV_Y_CALENDAR=236 NAV_Y_SETTINGS=248
+export PROJECT_X=100 PROJECT_Y=364
+export SEARCH_X=120 SEARCH_Y=112
 export ROW_X=400 ROW_Y=95
 export PANEL_CLOSE_X=1050 PANEL_CLOSE_Y=30
 # The 已完成 checkbox sits on the panel's third row (its <label> wraps the box,
@@ -118,7 +121,7 @@ export PANEL_DONE_X=790 PANEL_DONE_Y=107
 # First "稍后" button on the reminder card, which is pinned bottom-right.
 export REMIND_SNOOZE_X=820 REMIND_SNOOZE_Y=680
 # 生活 in the sidebar (second project), then the 买菜 row inside it.
-export LIFE_X=100 LIFE_Y=352
+export LIFE_X=100 LIFE_Y=396
 export LIFE_ROW_X=400 LIFE_ROW_Y=127
 # Attachment row + its delete button in the panel's 附件 block. The block sits
 # below 描述/重复/标签, so its exact y is read off 14-attachments.
@@ -165,13 +168,16 @@ shot 03-today
 click "$NAV_X" "$NAV_Y_CALENDAR"
 shot 04-calendar
 
-click "$NAV_X" "$NAV_Y_QUICKADD"
+click "$NAV_X" "$NAV_Y_ADD"
 shot 05-quickadd
 # xdotool can only synthesise Latin keysyms, so the shorthand here is the ASCII
 # spelling of the same grammar (!urgent / @review / ^tomorrow 09:30).
 xdotool type --delay 40 'Review API changes !urgent @review ^tomorrow 09:30'
 sleep 2
 shot 06-quickadd-parsed
+# Esc dismisses the floating panel so the following steps see the plain layout.
+xdotool key Escape
+sleep 1
 
 click "$PROJECT_X" "$PROJECT_Y"
 shot 07-project

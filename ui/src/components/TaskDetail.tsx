@@ -3,8 +3,8 @@ import {
   Button,
   Checkbox,
   DatePicker,
-  Drawer,
   Input,
+  Modal,
   Popconfirm,
   Select,
   Skeleton,
@@ -24,23 +24,19 @@ import {
   toDateTimeInput,
 } from "../lib/dates";
 import { useTaskMutations } from "../hooks/useTaskMutations";
+import { PRIORITY_OPTIONS } from "../lib/priority";
 import AttachmentList from "./AttachmentList";
 import MarkdownPreview from "./MarkdownPreview";
 import RecurrenceEditor from "./RecurrenceEditor";
 import TagPicker from "./TagPicker";
 import TaskRow from "./TaskRow";
 
-const PRIORITIES: Priority[] = ["none", "low", "medium", "high", "urgent"];
-const PRIORITY_LABEL: Record<Priority, string> = {
-  none: "无",
-  low: "低",
-  medium: "中",
-  high: "高",
-  urgent: "紧急",
-};
-
-/** Task detail drawer (design §13.2): description + preview, subtasks, tags,
- *  attachments and the recurrence rule — all editing the same core commands. */
+/** Task detail dialog (design §13.2): description + preview, subtasks, tags,
+ *  attachments and the recurrence rule — all editing the same core commands.
+ *
+ *  A centred modal rather than a side drawer: the panel is a form read top to
+ *  bottom, and centring it keeps it on the same axis as the list it was opened
+ *  from instead of hanging off the window's right edge. */
 export default function TaskDetail({
   taskId,
   onClose,
@@ -63,7 +59,7 @@ export default function TaskDetail({
     enabled: Boolean(taskId),
   });
   const { data: subtasks } = useQuery({
-    queryKey: ["subtasks", taskId],
+    queryKey: qk.subtasks(taskId ?? ""),
     queryFn: () => api.taskListSubtasks(taskId!),
     enabled: Boolean(taskId),
   });
@@ -81,7 +77,7 @@ export default function TaskDetail({
     mutationFn: (title: string) => api.taskAddSubtask(taskId!, { title }),
     onSuccess: () => {
       setSubtask("");
-      qc.invalidateQueries({ queryKey: ["subtasks", taskId] });
+      qc.invalidateQueries({ queryKey: qk.subtasks(taskId ?? "") });
       qc.invalidateQueries({ queryKey: qk.tasksAll });
       qc.invalidateQueries({ queryKey: qk.projects });
     },
@@ -106,13 +102,17 @@ export default function TaskDetail({
   const dirtyDesc = desc !== null && desc !== (task?.description ?? "");
 
   return (
-    <Drawer
+    <Modal
       open={Boolean(taskId)}
-      onClose={onClose}
-      width={400}
+      onCancel={onClose}
       title="任务详情"
+      footer={null}
+      centered
+      width={560}
       destroyOnHidden
-      styles={{ body: { padding: 16 } }}
+      // The form is longer than the window on a short screen; scroll the body
+      // and keep the title bar put.
+      styles={{ body: { maxHeight: "68vh", overflowY: "auto", paddingTop: 12 } }}
     >
       {isLoading || !task ? (
         <Skeleton active />
@@ -147,7 +147,7 @@ export default function TaskDetail({
                 style={{ width: 84 }}
                 value={task.priority}
                 onChange={(v) => commit({ priority: v as Priority })}
-                options={PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABEL[p] }))}
+                options={PRIORITY_OPTIONS}
               />
             </span>
             <Popconfirm
@@ -281,7 +281,7 @@ export default function TaskDetail({
               )
             }
           >
-            <ul className="mb-2 divide-y divide-[var(--border-hairline)] overflow-hidden rounded-md border border-[var(--border-hairline)]">
+            <ul className="mb-2 divide-y divide-[var(--border-hairline)]">
               {(subtasks ?? []).map((s) => (
                 <SubtaskRow key={s.id} task={s} onOpen={onOpenTask} />
               ))}
@@ -318,7 +318,7 @@ export default function TaskDetail({
           </Typography.Text>
         </div>
       )}
-    </Drawer>
+    </Modal>
   );
 }
 

@@ -34,6 +34,11 @@ export interface TaskDto {
   has_attachments: boolean;
   /** At least one task has this one as `parent_id` (drives list expansion). */
   has_subtasks: boolean;
+  /** Subtree roll-up behind the row's progress chip: ticked / total
+   *  descendants, counted over every level so it matches the branch that
+   *  expanding the row reveals. */
+  subtask_done: number;
+  subtask_total: number;
   sort_order: number;
   created_at: number;
   updated_at: number;

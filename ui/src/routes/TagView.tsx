@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
+import PageContent from "../components/PageContent";
 import PageHeader from "../components/PageHeader";
 import TaskList from "../components/TaskList";
 import { tagFilter } from "../lib/filter";
@@ -19,9 +20,9 @@ export default function TagView() {
   return (
     <section className="flex h-full min-h-0 flex-col">
       <PageHeader title={`#${tag?.name ?? "标签"}`} meta={tag ? `${tag.count} 项` : undefined} />
-      <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
+      <PageContent taskList>
         <TaskList filter={filter} onOpenTask={selectTask} emptyHint="这个标签下没有任务" />
-      </div>
+      </PageContent>
     </section>
   );
 }

@@ -16,8 +16,13 @@ export function useTaskMutations() {
     qc.invalidateQueries({ queryKey: qk.tasksAll });
     qc.invalidateQueries({ queryKey: qk.taskAll });
     qc.invalidateQueries({ queryKey: qk.projects });
+    // The project header's open/completed/overdue counts are rolled up server
+    // side, so a task write has to refetch the single-project query too.
+    qc.invalidateQueries({ queryKey: qk.projectAll });
     qc.invalidateQueries({ queryKey: qk.reportAll });
     qc.invalidateQueries({ queryKey: qk.searchAll });
+    // Expanded branches: a child's status also moves its parent's done/total.
+    qc.invalidateQueries({ queryKey: qk.subtasksAll });
   };
 
   const toggle = useMutation({

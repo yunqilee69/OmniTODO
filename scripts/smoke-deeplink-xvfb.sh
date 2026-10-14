@@ -47,7 +47,7 @@ home="$(mktemp -d /tmp/omnitodo-deeplink-XXXXXX)"
 mkdir -p "$out"
 rm -f "$out"/*.png "$out"/*.log
 export HOME="$home"
-db="$HOME/.local/share/omnitodo/omnitodo.db"
+db="$HOME/.omnitodo/omnitodo.db"
 
 echo "==> seeding two tasks so the focused one is unambiguous ($db)"
 "$cli" init >/dev/null

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Verify the global quick-add shortcut actually opens the quick-add view
+# Verify the global quick-add shortcut actually raises the quick-add panel
 # (design §12: “全局快捷键唤起快捷添加窗”, §16 P2 托盘 + 快捷添加).
 #
 # `shortcut.rs` registers Ctrl+Shift+Space and emits `quickadd:open`; a bare
 # Xvfb is enough to exercise the whole chain, because the shortcut is X-global
 # (no WM needed) and xdotool can synthesise the keystroke. The evidence is a
-# screenshot: the sidebar must show 快速添加 selected afterwards.
+# screenshot: the floating input box must appear over the content pane.
 #
 #   scripts/smoke-shortcut-xvfb.sh --bin /usr/bin/omnitodo-desktop \
 #                                  --cli /build-target/release/omnitodo
@@ -40,7 +40,7 @@ home="$(mktemp -d /tmp/omnitodo-shortcut-XXXXXX)"
 mkdir -p "$out"
 rm -f "$out"/*.png "$out"/*.log
 export HOME="$home"
-db="$HOME/.local/share/omnitodo/omnitodo.db"
+db="$HOME/.omnitodo/omnitodo.db"
 
 echo "==> seeding one task ($db)"
 "$cli" init >/dev/null
@@ -81,16 +81,14 @@ echo
 echo "==> assertions"
 status=0
 
-# The quick-add view is reachable at /quickadd, whose heading is 快速添加 and
-# whose sidebar entry is highlighted. Compare the two frames: pressing the
-# shortcut must change the screen, and the after-frame must contain the view.
-# The quick-add view replaces the main pane, so compare that region rather than
-# the whole frame: both frames are mostly white, and a whole-screen mean barely
-# moves (the sidebar highlight alone is well under 0.1% of the pixels).
+# The quick-add panel is a floating input box anchored below the sidebar's
+# 添加任务 button, spilling into the content pane. Compare the two frames:
+# pressing the shortcut must change that region, and the after-frame must
+# contain the panel. Compare the overlap region rather than the whole frame:
+# both frames are otherwise static, so a whole-screen mean barely moves.
 delta=$(python3 - "$out/01-before-shortcut.png" "$out/02-after-shortcut.png" <<'PY'
 import subprocess, sys
-# Main pane of the 1100x720 window at (0,0): x>=240, y<200 — the heading plus
-# the quick-add input.
+# Region covering the floating panel over the main pane: x>=240, y<200.
 CROP = "860x200+240+0"
 def mean(path):
     o = subprocess.run(["convert", path, "-crop", CROP, "+repage", "-colorspace", "gray",

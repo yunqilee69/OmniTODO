@@ -32,6 +32,26 @@ export function applyOrder<T extends { id: string }>(list: readonly T[], ordered
 }
 
 /**
+ * Reorder the `orderedIds` among themselves in place, leaving every other
+ * element where it is.
+ *
+ * A subtask branch is cached as one flat, sort-ordered subtree, so a sibling
+ * group is a *subsequence* of it interleaved with the group's own descendants.
+ * Writing the new sibling order back therefore has to replace the group's
+ * positions in place rather than rebuild the list, or the descendants would be
+ * hoisted out of their parents.
+ */
+export function reorderSubsequence<T extends { id: string }>(
+  list: readonly T[],
+  orderedIds: readonly string[],
+): T[] {
+  const byId = new Map(list.map((t) => [t.id, t]));
+  const moved = new Set(orderedIds);
+  let next = 0;
+  return list.map((t) => (moved.has(t.id) ? byId.get(orderedIds[next++]) ?? t : t));
+}
+
+/**
  * dnd-kit gives the dragged and hovered **ids**; the store wants the whole new
  * order. Returns the reordered list (or `null` when nothing should change —
  * e.g. the drop target is outside the list).

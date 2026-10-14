@@ -28,11 +28,14 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 echo "==> 1/4 frontend (ui/dist)"
-npm --prefix ui ci --no-audit --no-fund || npm --prefix ui install --no-audit --no-fund
-npm --prefix ui run build
+# `cd` into the package rather than `npm --prefix <dir>`: on native Windows
+# (MSYS/Git Bash, npm 10) a leading `--prefix` makes `npm install` look for
+# package.json in the repo root and fail with ENOENT.
+(cd ui && npm ci --no-audit --no-fund) || (cd ui && npm install --no-audit --no-fund)
+(cd ui && npm run build)
 
 echo "==> 2/4 tauri CLI"
-npm --prefix omnitodo-desktop install --no-audit --no-fund
+(cd omnitodo-desktop && npm install --no-audit --no-fund)
 
 echo "==> 3/4 MCP sidecar (binaries/omnitodo-mcp-<triple>)"
 node scripts/build-sidecar.mjs

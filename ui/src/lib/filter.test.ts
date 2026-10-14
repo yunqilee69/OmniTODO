@@ -27,6 +27,10 @@ describe("view filters", () => {
     expect(projectFilter("p1")).toMatchObject({ project_ids: ["p1"], sort: "manual" });
   });
 
+  it("project display settings can swap in a computed order", () => {
+    expect(projectFilter("p1", { sort: "dueasc" })).toMatchObject({ sort: "dueasc" });
+  });
+
   it("tag views cut across projects, so they order by due date", () => {
     expect(tagFilter("t1")).toMatchObject({ tag_ids: ["t1"], sort: "dueasc" });
   });

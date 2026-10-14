@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
+import PageContent from "../components/PageContent";
 import PageHeader from "../components/PageHeader";
 import TaskList from "../components/TaskList";
 import { searchFilter } from "../lib/filter";
@@ -32,7 +33,7 @@ export default function SearchView() {
   return (
     <section className="flex h-full min-h-0 flex-col">
       <PageHeader title="搜索" />
-      <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
+      <PageContent taskList>
         <Input
           autoFocus
           allowClear
@@ -59,7 +60,7 @@ export default function SearchView() {
             </Typography.Text>
           )}
         </div>
-      </div>
+      </PageContent>
     </section>
   );
 }

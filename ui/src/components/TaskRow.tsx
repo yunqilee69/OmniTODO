@@ -1,38 +1,36 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
-import { Button, Checkbox, DatePicker, Dropdown, Tag, Tooltip, Typography } from "antd";
+import { Button, Checkbox, DatePicker, Dropdown, Tag, Tooltip, Typography, type MenuProps } from "antd";
 import {
   AlertOutlined,
+  BranchesOutlined,
+  CalendarOutlined,
   CaretRightOutlined,
+  CheckOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  FlagOutlined,
+  MoreOutlined,
   PaperClipOutlined,
   SyncOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 import type { Priority, TaskDto, TaskPatch } from "../api/client";
 import {
+  formatDue,
   fromDateInput,
   fromDateTimeInput,
   isOverdue,
+  isToday,
   toDateInput,
   toDateTimeInput,
 } from "../lib/dates";
 import { splitHighlight } from "../lib/highlight";
+import { rowPaddingLeft, rowRuleInset } from "../lib/layout";
+import { PRIORITIES, PRIORITY_COLOR, PRIORITY_LABEL, PRIORITY_RING } from "../lib/priority";
+import { labelWidth } from "../lib/text";
 
-const PRIORITIES: Priority[] = ["none", "low", "medium", "high", "urgent"];
-const PRIORITY_LABEL: Record<Priority, string> = {
-  none: "无",
-  low: "低",
-  medium: "中",
-  high: "高",
-  urgent: "紧急",
-};
-/** Left-edge stripe colour per priority (DESIGN §3.3). */
-const PRIORITY_COLOR: Record<Priority, string> = {
-  none: "transparent",
-  low: "var(--prio-low)",
-  medium: "var(--prio-medium)",
-  high: "var(--prio-high)",
-  urgent: "var(--prio-urgent)",
-};
+/** Menu keys for the "优先级" submenu; the value follows the colon. */
+const PRIORITY_KEY = "priority:";
 
 export interface TaskRowProps {
   task: TaskDto;
@@ -40,6 +38,8 @@ export interface TaskRowProps {
   onToggle?: (task: TaskDto) => void;
   /** Inline edits commit through the same patch path as the detail panel. */
   onPatch?: (id: string, patch: TaskPatch) => void;
+  /** Removes the task (the row's "⋯" menu confirms first). */
+  onDelete?: (task: TaskDto) => void;
   /** Search term to highlight in the title. */
   highlight?: string;
   /** Drag handle slot, filled by the sortable wrapper. */
@@ -58,15 +58,29 @@ export interface TaskRowProps {
   animateIn?: boolean;
   /** Render index, used only for the reveal delay. */
   index?: number;
+  /** Set by the windowed list so the virtualizer can measure the real height. */
+  dataIndex?: number;
 }
 
-/** One task line: priority stripe, quick-complete, inline priority/due editing
- *  (design §13.2). Full antd component set. */
+/**
+ * One task line (DESIGN §8.3) — the view's core component.
+ *
+ * Layout is `[handle?] [caret | handle] [checkbox] [title / description /
+ * date · subtask progress] [tags · badges · ⋯]`. The handle floats in on hover
+ * and sits against the checkbox; a row with subtasks moves it one slot left and
+ * puts the always-visible caret beside the checkbox instead. Priority reads off
+ * the checkbox ring (§8.4) rather than a stripe, so the row's left edge stays a
+ * single clean rule; the trailing controls are quiet meta that fades in on
+ * hover, so a row reads as a title first and a drawer of actions second. Both
+ * gutters are reserved whether or not they hold anything, which keeps every
+ * title on the same left edge.
+ */
 export default function TaskRow({
   task,
   onOpen,
   onToggle,
   onPatch,
+  onDelete,
   highlight,
   handle,
   depth = 0,
@@ -77,6 +91,7 @@ export default function TaskRow({
   className = "",
   animateIn = false,
   index = 0,
+  dataIndex,
 }: TaskRowProps) {
   const [dueOpen, setDueOpen] = useState(false);
   const done = task.status === "done" || task.status === "cancelled";
@@ -84,9 +99,62 @@ export default function TaskRow({
   const overdue = isOverdue(dueAt, task.status, task.all_day);
 
   const dpValue = dueAt == null ? null : dayjs(task.all_day ? toDateInput(dueAt, true) : toDateTimeInput(dueAt));
+  const dueLabel = dueAt == null ? "＋日期" : formatDue(dueAt, task.all_day);
+
+  /** Only two dates earn colour (DESIGN §6.3): late is red, today is the accent
+   *  that marks "now" everywhere else. Everything else stays quiet meta. */
+  const dueInk = overdue
+    ? "var(--state-overdue)"
+    : dueAt != null && isToday(dueAt, task.all_day)
+      ? "var(--accent)"
+      : "var(--text-tertiary)";
+
+  const priorityItem = (p: Priority) => ({
+    key: `${PRIORITY_KEY}${p}`,
+    label: PRIORITY_LABEL[p],
+    disabled: !onPatch,
+    icon:
+      p === task.priority ? (
+        <CheckOutlined />
+      ) : p === "none" ? undefined : (
+        <span
+          className="inline-block size-2 rounded-full"
+          style={{ background: PRIORITY_COLOR[p] }}
+        />
+      ),
+  });
+
+  const moreMenu: MenuProps = {
+    items: [
+      { key: "open", icon: <EditOutlined />, label: "打开详情" },
+      {
+        key: "priority",
+        icon: <FlagOutlined />,
+        label: "优先级",
+        children: PRIORITIES.map(priorityItem),
+      },
+      ...(onDelete
+        ? [{ key: "delete", icon: <DeleteOutlined />, label: "删除", danger: true }]
+        : []),
+    ],
+    onClick: ({ key, domEvent }) => {
+      domEvent.stopPropagation();
+      if (key === "open") onOpen?.(task.id);
+      else if (key.startsWith(PRIORITY_KEY)) {
+        onPatch?.(task.id, { priority: key.slice(PRIORITY_KEY.length) as Priority });
+      } else if (key === "delete") onDelete?.(task);
+    },
+  };
+
+  /** The picker's input shows a relative label. An all-day task stores a civil
+   *  date (UTC midnight), so re-anchor it before formatting — reading the local
+   *  dayjs value directly would shift the day in timezones east of UTC. */
+  const formatLabel = (d: dayjs.Dayjs): string =>
+    task.all_day
+      ? formatDue(fromDateInput(d.format("YYYY-MM-DD"), true) ?? d.valueOf(), true)
+      : formatDue(d.valueOf(), false);
 
   const commitDue = (value: dayjs.Dayjs | null) => {
-    setDueOpen(false);
     if (!onPatch) return;
     if (!value) {
       onPatch(task.id, { clear_due_at: true });
@@ -97,32 +165,64 @@ export default function TaskRow({
     if (ms !== null) onPatch(task.id, { due_at: ms });
   };
 
-  const priorityMenu = {
-    items: PRIORITIES.map((p) => ({ key: p, label: PRIORITY_LABEL[p] })),
-    onClick: (info: { key: string }) => onPatch?.(task.id, { priority: info.key as Priority }),
-  };
+  const dueChip = (
+    <span
+      className={`flex shrink-0 items-center gap-1 ${dueAt == null ? "row-action" : ""}`}
+      style={{ color: dueInk }}
+    >
+      {overdue ? (
+        <Tooltip title="已逾期">
+          <AlertOutlined style={{ fontSize: 12 }} />
+        </Tooltip>
+      ) : (
+        <CalendarOutlined style={{ fontSize: 12 }} />
+      )}
+      <DatePicker
+        size="small"
+        variant="borderless"
+        className="task-date"
+        style={{ width: labelWidth(dueLabel) }}
+        suffixIcon={null}
+        placeholder="＋日期"
+        value={dpValue}
+        showTime={!task.all_day}
+        open={dueOpen}
+        onOpenChange={(o) => setDueOpen(o)}
+        onChange={(v) => commitDue(v)}
+        disabled={!onPatch}
+        format={formatLabel}
+      />
+    </span>
+  );
 
   return (
     <li
       ref={innerRef}
+      data-index={dataIndex}
       style={{
-        paddingLeft: `${12 + depth * 16}px`,
+        paddingLeft: `${rowPaddingLeft(depth)}px`,
+        // Read by the shared `.task-panel` rule that draws the hairline above
+        // this row (see index.css).
+        "--rule-inset": `${rowRuleInset(depth)}px`,
         animationDelay: animateIn ? `${Math.min(index, 8) * 24}ms` : undefined,
+        // The checkbox ring is the row's only priority channel (§8.4); the
+        // custom property lets the shared CSS rule read the per-row hue.
+        "--checkbox-ring": PRIORITY_RING[task.priority],
         ...style,
-      }}
-      className={`group relative flex items-center gap-2 py-1 pr-3 hover:bg-black/[0.03] ${className}`}
+      } as CSSProperties}
+      className={`task-row group relative flex items-start gap-2 py-1.5 pr-3 ${className}`}
     >
-      <span
-        className="absolute inset-y-0 left-0 w-[3px]"
-        style={{ background: PRIORITY_COLOR[task.priority] }}
-        aria-hidden="true"
-      />
-      {handle}
-
-      {/* Expand handle (design §13.2). The slot is always reserved so titles
-          stay aligned whether or not a row has subtasks. */}
-      <span className="flex w-4 shrink-0 items-center justify-center">
-        {task.has_subtasks && onToggleExpand && (
+      {/* Two gutters sit left of the checkbox, and both are always reserved so
+          the checkbox (and every title) keeps one left edge across rows. The
+          slot next to the checkbox holds the caret when the row has a branch
+          (always visible — §8.3: the arrow is a hint, not hover chrome);
+          otherwise it holds the drag handle, which is hover-revealed. A row
+          with a caret pushes the handle one slot further left. */}
+      <span className="flex h-[1.5em] w-4 shrink-0 items-center justify-center">
+        {task.has_subtasks && onToggleExpand ? handle : null}
+      </span>
+      <span className="flex h-[1.5em] w-4 shrink-0 items-center justify-center">
+        {task.has_subtasks && onToggleExpand ? (
           <Button
             type="text"
             size="small"
@@ -134,34 +234,66 @@ export default function TaskRow({
               <CaretRightOutlined
                 style={{
                   fontSize: 10,
+                  color: "var(--text-tertiary)",
                   transform: expanded ? "rotate(90deg)" : undefined,
                 }}
               />
             }
           />
+        ) : (
+          handle
         )}
       </span>
 
-      <Checkbox
-        checked={done}
-        onChange={() => onToggle?.(task)}
-        aria-label={`完成 ${task.title}`}
-      />
+      <span className="flex h-[1.5em] shrink-0 items-center">
+        <Checkbox
+          checked={done}
+          onChange={() => onToggle?.(task)}
+          aria-label={`完成 ${task.title}`}
+        />
+      </span>
 
-      <Typography.Text
-        delete={done}
-        ellipsis
-        title={task.title}
-        onClick={() => onOpen?.(task.id)}
-        style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
-      >
-        {highlight ? highlightNodes(task.title, highlight) : task.title}
-      </Typography.Text>
+      <div className="min-w-0 flex-1">
+        <Typography.Text
+          delete={done}
+          ellipsis={{ tooltip: task.title }}
+          onClick={() => onOpen?.(task.id)}
+          className="task-title block"
+          style={{
+            cursor: "pointer",
+            color: done ? "var(--text-disabled)" : undefined,
+          }}
+        >
+          {highlight ? highlightNodes(task.title, highlight) : task.title}
+        </Typography.Text>
+        {/* Priority is carried by the checkbox ring's colour, which a screen
+            reader cannot see — the same fact is repeated as text here. */}
+        <span className="sr-only">优先级：{PRIORITY_LABEL[task.priority]}</span>
+
+        {task.description && (
+          <div
+            className="mt-0.5 truncate text-meta"
+            style={{ color: "var(--text-tertiary)" }}
+            title={task.description}
+          >
+            {task.description}
+          </div>
+        )}
+
+        {(dueAt != null || task.subtask_total > 0) && (
+          <div className="mt-0.5 flex items-center gap-3 text-meta leading-none">
+            {dueAt != null && dueChip}
+            {task.subtask_total > 0 && (
+              <SubtaskProgress done={task.subtask_done} total={task.subtask_total} />
+            )}
+          </div>
+        )}
+      </div>
 
       {task.tags.map((tag) => (
         <Tag
           key={tag}
-          className="hidden md:inline-flex"
+          className="hidden shrink-0 md:inline-flex"
           style={{
             marginInlineEnd: 0,
             background: "var(--accent-soft)",
@@ -173,7 +305,7 @@ export default function TaskRow({
         </Tag>
       ))}
 
-      <span className="flex shrink-0 items-center gap-1.5 text-xs opacity-55">
+      <span className="flex h-[1.5em] shrink-0 items-center gap-1.5 text-xs opacity-55">
         {task.has_attachments && (
           <Tooltip title="有附件">
             <PaperClipOutlined />
@@ -186,52 +318,48 @@ export default function TaskRow({
         )}
       </span>
 
-      {/* Inline priority (DESIGN §8.5) */}
-      <Dropdown menu={priorityMenu} trigger={["click"]} disabled={!onPatch}>
-        <Button
-          type="text"
-          size="small"
-          aria-label={`优先级：${PRIORITY_LABEL[task.priority]}`}
-          className={task.priority === "none" ? "opacity-0 group-hover:opacity-100" : ""}
-          icon={
-            <span
-              className="inline-block size-2 rounded-full"
-              style={
-                task.priority === "none"
-                  ? { boxShadow: "inset 0 0 0 1.5px var(--border-hairline)" }
-                  : { background: PRIORITY_COLOR[task.priority] }
-              }
-            />
-          }
-        />
-      </Dropdown>
+      {/* Trailing actions. The row's own meta — date, subtask roll-up — lives
+          under the title (§8.6), so all that is left here is the hover-revealed
+          "＋日期" for a task that has none, and the "⋯" menu. */}
+      <span className="flex h-[1.5em] shrink-0 items-center gap-1">
+        {dueAt == null && dueChip}
 
-      {/* Inline due date (DESIGN §8.6) */}
-      <span
-        className="flex shrink-0 items-center gap-1"
-        style={overdue ? { color: "var(--prio-urgent)" } : undefined}
-      >
-        {overdue && (
-          <Tooltip title="已逾期">
-            <AlertOutlined />
-          </Tooltip>
-        )}
-        <DatePicker
-          size="small"
-          variant="borderless"
-          className={dueAt == null ? "opacity-0 group-hover:opacity-100" : ""}
-          style={{ width: task.all_day ? 104 : 152 }}
-          placeholder="＋日期"
-          value={dpValue}
-          showTime={!task.all_day}
-          open={dueOpen}
-          onOpenChange={(o) => setDueOpen(o)}
-          onChange={(v) => commitDue(v)}
-          disabled={!onPatch}
-          format={task.all_day ? "M月D日" : "M月D日 HH:mm"}
-        />
+        <Dropdown menu={moreMenu} trigger={["click"]}>
+          <Button
+            type="text"
+            size="small"
+            aria-label={`更多操作：${task.title}（优先级：${PRIORITY_LABEL[task.priority]}）`}
+            className="row-action"
+            style={{ padding: 0, width: 18, height: 18, minWidth: 18 }}
+            icon={<MoreOutlined />}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </Dropdown>
       </span>
     </li>
+  );
+}
+
+/**
+ * Branch roll-up for a row that has children (DESIGN §8.3): how much of the
+ * subtree behind the caret is ticked. Quiet by design — a branch glyph plus
+ * `done/total`, sitting under the title like the description line, so a parent
+ * row still reads as a title first. It only takes the done colour once the
+ * whole branch is finished.
+ */
+function SubtaskProgress({ done, total }: { done: number; total: number }) {
+  const complete = done >= total;
+  return (
+    <span
+      className="flex items-center gap-1 text-meta leading-none"
+      style={{ color: complete ? "var(--state-done)" : "var(--text-tertiary)" }}
+      aria-label={`子任务完成 ${done} / ${total}`}
+    >
+      <BranchesOutlined style={{ fontSize: 12 }} aria-hidden="true" />
+      <span className="tabular">
+        {done}/{total}
+      </span>
+    </span>
   );
 }
 

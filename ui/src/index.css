@@ -15,9 +15,14 @@
   --bg-app: #f6f3ee;
   --bg-surface: #fcfaf7;
   --bg-sunken: #ece8e0;
+  --bg-hover: rgba(33, 31, 28, 0.05);
+  --bg-selected: rgba(14, 110, 99, 0.1);
   --border-hairline: #e4dfd7;
   --border-strong: #cfc8bb;
+  --text-primary: #211f1c;
+  --text-secondary: #57524a;
   --text-tertiary: #8a8378;
+  --text-disabled: #b4ac9f;
   --text-on-accent: #ffffff;
 
   /* Brand accent */
@@ -25,10 +30,29 @@
   --accent-soft: #e3efeb;
   --accent-ink: #0a4a43;
 
-  /* Priority scale (low → hot) — the left-edge stripe.
-     Hues are spread across blue → amber → orange → red so the tiny 6px dot
-     and 3px stripe stay distinguishable; the old ochre/orange/red trio sat
-     too close together to read apart at that size. */
+  /* State colours (DESIGN §3.4) */
+  --state-done: #6e7f60;
+  --state-overdue: #c23b2e;
+  --state-success: #3f7c4f;
+  --state-warning: #b9882b;
+  --state-danger: #c23b2e;
+
+  /* Motion (DESIGN §9) */
+  --t-instant: 90ms;
+  --t-fast: 140ms;
+  --t-base: 200ms;
+  --ease-out: cubic-bezier(0.2, 0.6, 0.2, 1);
+
+  /* Elevation (DESIGN §5.4) — flat is the default, shadows are the exception:
+     only things that float above the page carry one. */
+  --e1: 0 1px 2px rgba(33, 31, 28, 0.06), 0 1px 1px rgba(33, 31, 28, 0.04);
+  --e2: 0 4px 12px rgba(33, 31, 28, 0.1);
+  --e3: 0 12px 32px rgba(33, 31, 28, 0.16);
+
+  /* Priority scale (low → hot) — the checkbox ring (§3.3/§8.4).
+     Hues are spread across blue → amber → orange → red so the ring stays
+     legible as a 1.5px hairline; the old ochre/orange/red trio sat too close
+     together to read apart at that size. */
   --prio-low: #5a80b0;
   --prio-medium: #e0a70f;
   --prio-high: #ef6a0e;
@@ -45,13 +69,26 @@
   --bg-app: #1a1816;
   --bg-surface: #211f1d;
   --bg-sunken: #141311;
+  --bg-hover: rgba(237, 233, 226, 0.06);
+  --bg-selected: rgba(63, 167, 149, 0.16);
   --border-hairline: #2e2b27;
   --border-strong: #3d3933;
+  --text-primary: #ede9e2;
+  --text-secondary: #b3aca0;
   --text-tertiary: #857e72;
+  --text-disabled: #5a544c;
   --text-on-accent: #0b2b27;
   --accent: #3fa795;
   --accent-soft: #12312c;
   --accent-ink: #8fd8cc;
+  --state-done: #7f9670;
+  --state-overdue: #e06b5e;
+  --state-success: #5aa06b;
+  --state-warning: #d8a94a;
+  --state-danger: #e06b5e;
+  --e1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --e2: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --e3: 0 12px 32px rgba(0, 0, 0, 0.6);
   color-scheme: dark;
 }
 
@@ -101,6 +138,118 @@
     opacity: 0.025;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
+
+  /* Quick-add panel entrance (DESIGN §9: a short fade + lift). */
+  @keyframes quick-add-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .quick-add-pop {
+    animation: quick-add-in 140ms cubic-bezier(0.2, 0.6, 0.2, 1);
+  }
+
+  /* -- Task rows (DESIGN §8.3 / §8.4) ---------------------------------------
+     antd owns the controls; these rules turn the stock square checkbox into the
+     design's 16px circle. A row keeps no hover fill of its own: what appears on
+     hover is the handle and the meta controls, and that reveal is the feedback —
+     a fill behind the whole row only adds noise to a list of rules (§8.3). In
+     antd v6 the checkbox box is `.ant-checkbox` itself (the old
+     `.ant-checkbox-inner` is gone) and its `::after` is the tick. */
+  /* antd v6 draws the box on `.ant-checkbox` itself and pushes its own
+     `border-width` after ours, so this one property needs the explicit override
+     to reach the design's 1.5px ring. The hue is the row's priority, handed
+     down as `--checkbox-ring` by `TaskRow`. */
+  .task-row .ant-checkbox {
+    border-radius: 50%;
+    border-width: 1.5px !important;
+    border-color: var(--checkbox-ring, var(--border-strong));
+  }
+  .task-row .ant-checkbox:hover,
+  .task-row .ant-checkbox-wrapper:hover .ant-checkbox {
+    border-color: var(--accent);
+  }
+  .task-row .ant-checkbox-checked,
+  .task-row .ant-checkbox-checked:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .task-row .ant-checkbox-checked::after {
+    border-color: var(--text-on-accent);
+  }
+  /* -- Task panel (DESIGN §8.3) --------------------------------------------
+     Rows are separated by hairlines, and `divide-y` is not enough: the rule has
+     to stop at the checkbox column instead of running to the panel's left edge,
+     so it never passes above or below the gutter where the drag handle and the
+     subtask caret float. Each row carries its own inset (see `TaskRow`), which
+     also keeps a windowed, absolutely positioned row drawing its own rule. */
+  .task-panel > li + li {
+    position: relative;
+  }
+  .task-panel > li + li::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    inset-inline-start: var(--rule-inset, 60px);
+    inset-inline-end: 0;
+    height: 1px;
+    background: var(--border-hairline);
+    pointer-events: none;
+  }
+
+  /* The inline meta controls and the drag handle stay quiet until the row is
+     hovered or the control itself is reached by keyboard. `:focus-visible`, not
+     `:focus-within`, is what tells a keyboard focus from a mouse click — with
+     `:focus-within` a clicked handle kept its row's actions revealed for good.
+     A row mid-drag keeps them showing so the handle stays visible under the
+     pointer. */
+  .task-row .row-action {
+    opacity: 0;
+    transition: opacity var(--t-instant) var(--ease-out);
+  }
+  .task-row:hover .row-action,
+  .task-row .row-action:focus-visible,
+  .task-row.is-dragging .row-action {
+    opacity: 1;
+  }
+  /* Borderless date control reads as a meta chip, not a form field. */
+  .task-date .ant-picker-input > input {
+    font-size: 12px;
+    text-align: left;
+  }
+  .task-date.ant-picker {
+    padding: 0;
+  }
+
+  /* The closed "add task" row is an affordance, not a form: it stays quiet
+     until hovered, then picks up the accent so it reads as clickable. */
+  .composer-trigger {
+    transition: color var(--t-instant) var(--ease-out);
+  }
+  .composer-trigger:hover {
+    color: var(--accent);
+  }
+
+  /* The open composer box owns the border (§8.17), so its borderless fields
+     must not draw a second, unrelated focus rectangle around "任务名称" — the
+     box itself turns accent while focus is inside it (DESIGN §8.9). */
+  .composer-box {
+    transition: border-color var(--t-fast) var(--ease-out);
+  }
+  .composer-box:focus-within {
+    border-color: var(--accent);
+  }
+  .composer-box input:focus,
+  .composer-box input:focus-visible,
+  .composer-box .ant-picker-focused {
+    outline: none;
+    box-shadow: none;
+  }
 }
 
 @layer utilities {
@@ -109,5 +258,11 @@
   }
   .font-mono-ui {
     font-family: var(--font-mono);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-add-pop {
+    animation: none;
   }
 }
