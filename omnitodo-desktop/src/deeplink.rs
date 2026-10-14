@@ -6,7 +6,9 @@
 //! arrives either as `deep-link://new-url` or as the launch argument, and both go
 //! through [`focus_from_url`] so the behaviour cannot drift apart.
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
+
+use crate::window::raise_main;
 
 /// Event the frontend listens on; the payload is a task id.
 pub const FOCUS_TASK_EVENT: &str = "deeplink:focus-task";
@@ -98,14 +100,10 @@ pub fn register_on_open(app: &AppHandle, argv: &[String]) {
 
 /// Turn a URL into a UI action and emit it.
 fn dispatch(app: &AppHandle, url: &str) {
-    // A deep link is also how the user gets the window back, so bring it
-    // forward: otherwise the click appears to do nothing when the app is
-    // minimised or behind another window.
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+    // A deep link is also how the user gets the window back: without raising it
+    // the click appears to do nothing when the app is minimised or behind
+    // another window. Same reason the tray and the shortcut call this.
+    raise_main(app);
     match focus_from_url(url) {
         DeepLinkAction::FocusTask(id) => {
             let _ = app.emit(FOCUS_TASK_EVENT, id);

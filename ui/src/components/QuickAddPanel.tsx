@@ -35,13 +35,18 @@ const FIELDS: { key: string; label: string; token: string; example: string; icon
   { key: "recurrence", label: "重复", token: "*", example: "*每周", icon: <SyncOutlined /> },
 ];
 
-/** Where the floating panel sits: below the sidebar's 添加任务 button, spilling
- *  into the content pane like the reference design. */
+/** Where the floating panel sits: centred on the window and biased towards the
+ *  top, so it stays clear of the list beneath it. Centring uses `left/right: 0`
+ *  + `marginInline: auto` instead of a `translateX(-50%)` transform, because the
+ *  entry animation animates `transform` and would cancel the offset for its
+ *  140ms, making the panel jump sideways on every open. */
 const PANEL_STYLE: CSSProperties = {
   position: "fixed",
   top: 90,
-  left: 208,
-  width: "min(648px, calc(100vw - 232px))",
+  left: 0,
+  right: 0,
+  marginInline: "auto",
+  width: "min(648px, calc(100vw - 32px))",
   zIndex: 1000,
 };
 

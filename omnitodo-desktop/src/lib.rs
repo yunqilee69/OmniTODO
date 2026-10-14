@@ -13,6 +13,7 @@ mod mcp_http;
 mod shortcut;
 mod state;
 mod tray;
+mod window;
 
 use tauri::Manager;
 
