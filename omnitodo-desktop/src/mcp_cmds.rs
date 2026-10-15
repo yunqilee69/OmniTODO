@@ -4,10 +4,12 @@ use serde_json::json;
 use tauri::{AppHandle, State};
 
 use omnitodo_core::error::ApiError;
+use omnitodo_core::service::endpoint;
 use omnitodo_core::service::reminder;
 use omnitodo_core::service::Core;
 
-use crate::state::AppState;
+use crate::mcp_config::Snippet;
+use crate::state::{AppState, ControlState};
 
 type R<T> = Result<T, ApiError>;
 
@@ -17,17 +19,38 @@ pub async fn mcp_status(state: State<'_, AppState>) -> R<serde_json::Value> {
     let running = http.is_some();
     // Report the port actually bound, not just the configured default.
     let port = http.as_ref().map(|h| h.port).unwrap_or(state.http_port);
-    let bin = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join(mcp_bin_name())))
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| mcp_bin_name().to_string());
+    let bin = mcp_bin_path();
     let write_enabled = state.mcp_write_enabled().await?;
+    let control_state = match &*state.control_state.read().await {
+        ControlState::Starting => "starting",
+        ControlState::Listening => "listening",
+        ControlState::Failed(_) => "failed",
+    };
+    let control_error = match &*state.control_state.read().await {
+        ControlState::Failed(e) => Some(e.clone()),
+        _ => None,
+    };
     Ok(json!({
-        "stdio": { "bin_path": bin, "always_available": true },
-        "http": { "running": running, "port": port, "token": state.http_token },
-        "control": { "port": state.control_port, "token": state.control_token },
+        "version": env!("CARGO_PKG_VERSION"),
+        "stdio": {
+            "bin_path": bin.display().to_string(),
+            "exists": bin.is_file(),
+            "always_available": true,
+        },
+        "http": {
+            "running": running,
+            "port": port,
+            "token": state.http_token.read().await.clone(),
+        },
+        "control": {
+            "port": state.control_port,
+            "token": state.control_token.read().await.clone(),
+            "state": control_state,
+            "error": control_error,
+        },
         "write_enabled": write_enabled,
+        "db_path": omnitodo_core::config::db_path().display().to_string(),
+        "data_dir": omnitodo_core::config::data_dir().display().to_string(),
     }))
 }
 
@@ -79,26 +102,72 @@ pub async fn mcp_http_stop(state: State<'_, AppState>) -> R<()> {
 ///
 /// Carries the notify callback so assistant-driven writes refresh the UI without
 /// polling (§4.5), and `--write` only when the user enabled write tools (§11.4).
+/// `command` is the sidecar's absolute path: it ships next to the app and is not
+/// on `PATH`.
 #[tauri::command]
 pub async fn mcp_copy_client_config(state: State<'_, AppState>) -> R<String> {
-    let db = omnitodo_core::config::db_path();
-    let mut args = vec![
-        "--db".to_string(),
-        db.display().to_string(),
-        "--notify".to_string(),
-        format!("http://127.0.0.1:{}/internal/notify", state.control_port),
-        "--notify-token".to_string(),
-        state.control_token.clone(),
-    ];
-    if state.mcp_write_enabled().await? {
-        args.push("--write".to_string());
-    }
-    Ok(json!({
-        "mcpServers": {
-            "omnitodo": { "command": mcp_bin_name(), "args": args }
-        }
+    Ok(snippet(&state).await?.generic())
+}
+
+/// ZCode's own shape (`~/.zcode/cli/config.json`, nested `mcp.servers`).
+#[tauri::command]
+pub async fn mcp_zcode_config(state: State<'_, AppState>) -> R<String> {
+    Ok(snippet(&state).await?.zcode())
+}
+
+/// One line for the “参数（空格分隔）” form field.
+#[tauri::command]
+pub async fn mcp_args_line(state: State<'_, AppState>) -> R<String> {
+    Ok(snippet(&state).await?.args_line())
+}
+
+/// Everything the snippets need, read once so the three commands cannot drift.
+async fn snippet(state: &AppState) -> R<Snippet> {
+    Ok(Snippet {
+        bin: mcp_bin_path().display().to_string(),
+        db: omnitodo_core::config::db_path().display().to_string(),
+        notify: format!("http://127.0.0.1:{}/internal/notify", state.control_port),
+        token: state.control_token.read().await.clone(),
+        write: state.mcp_write_enabled().await?,
     })
-    .to_string())
+}
+
+/// Which loopback token a settings action is about.
+fn token_key(kind: &str) -> Result<&'static str, ApiError> {
+    match kind {
+        "control" => Ok(endpoint::CONTROL_TOKEN_KEY),
+        "http" => Ok(endpoint::HTTP_TOKEN_KEY),
+        _ => Err(ApiError {
+            code: "VALIDATION".into(),
+            message: format!("unknown token kind: {kind}"),
+        }),
+    }
+}
+
+/// Persist a user-supplied token and apply it immediately (design §4.5/§11.2).
+///
+/// The in-memory value is updated only after the write succeeds, so a rejected
+/// token leaves the running endpoint on the old one.
+#[tauri::command]
+pub async fn mcp_set_token(state: State<'_, AppState>, kind: String, token: String) -> R<()> {
+    let key = token_key(&kind)?;
+    state.core.set_endpoint_token(key, &token).await?;
+    apply_token(&state, &kind, token).await;
+    Ok(())
+}
+
+/// Replace a token with a freshly generated one and return it.
+#[tauri::command]
+pub async fn mcp_regenerate_token(state: State<'_, AppState>, kind: String) -> R<String> {
+    let key = token_key(&kind)?;
+    let token = state.core.regenerate_endpoint_token(key).await?;
+    apply_token(&state, &kind, token.clone()).await;
+    Ok(token)
+}
+
+async fn apply_token(state: &AppState, kind: &str, token: String) {
+    let slot = if kind == "control" { &state.control_token } else { &state.http_token };
+    *slot.write().await = token;
 }
 
 /// Loopback control endpoint coordinates (design §4.5), surfaced in settings so
@@ -107,8 +176,17 @@ pub async fn mcp_copy_client_config(state: State<'_, AppState>) -> R<String> {
 pub async fn control_config(state: State<'_, AppState>) -> R<crate::control::ControlConfig> {
     Ok(crate::control::ControlConfig {
         port: state.control_port,
-        token: state.control_token.clone(),
+        token: state.control_token.read().await.clone(),
     })
+}
+
+/// The sidecar, which ships in the same directory as this executable
+/// (design §15, `bundle.externalBin`).
+fn mcp_bin_path() -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join(mcp_bin_name())))
+        .unwrap_or_else(|| std::path::PathBuf::from(mcp_bin_name()))
 }
 
 fn mcp_bin_name() -> &'static str {

@@ -9,6 +9,7 @@ mod commands;
 mod control;
 mod deeplink;
 mod mcp_cmds;
+mod mcp_config;
 mod mcp_http;
 mod shortcut;
 mod state;
@@ -40,6 +41,7 @@ pub fn run() {
             let core = state.core.clone();
             let control_port = state.control_port;
             let control_token = state.control_token.clone();
+            let control_state = state.control_state.clone();
             let app_handle = app.handle().clone();
 
             // Manage the state before spawning anything that reads it back with
@@ -53,7 +55,9 @@ pub fn run() {
             {
                 let app = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = control::serve(control_port, control_token, app).await {
+                    if let Err(e) =
+                        control::serve(control_port, control_token, control_state, app).await
+                    {
                         eprintln!("control endpoint disabled: {e}");
                     }
                 });
@@ -122,6 +126,10 @@ pub fn run() {
             mcp_cmds::mcp_http_start,
             mcp_cmds::mcp_http_stop,
             mcp_cmds::mcp_copy_client_config,
+            mcp_cmds::mcp_zcode_config,
+            mcp_cmds::mcp_args_line,
+            mcp_cmds::mcp_set_token,
+            mcp_cmds::mcp_regenerate_token,
             mcp_cmds::control_config,
         ])
         .run(tauri::generate_context!())

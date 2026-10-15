@@ -1,21 +1,18 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   App as AntApp,
   Button,
   Card,
   Flex,
-  Input,
-  Segmented,
   Select,
+  Segmented,
   Space,
   Switch,
-  Tag,
   Typography,
   Upload,
 } from "antd";
 import {
-  CopyOutlined,
   DownloadOutlined,
   ExportOutlined,
   UploadOutlined,
@@ -23,6 +20,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 import { api, type ExportFormat, type ImportFormat, type TaskFilter } from "../api/client";
 import { qk } from "../api/queryKeys";
+import McpPanel from "../components/McpPanel";
 import PageContent from "../components/PageContent";
 import PageHeader from "../components/PageHeader";
 import { useSetting } from "../hooks/useSetting";
@@ -183,116 +181,6 @@ function Reminders() {
           </Space>
         </Row>
         {note && <Alert type="warning" showIcon message={note} />}
-      </Flex>
-    </Card>
-  );
-}
-
-function McpPanel() {
-  const qc = useQueryClient();
-  const { message } = AntApp.useApp();
-  const { data } = useQuery({
-    queryKey: qk.mcp("httpState"),
-    queryFn: () => api.mcpStatus(),
-  });
-  const [port, setPort] = useState("");
-
-  const refresh = () => {
-    qc.invalidateQueries({ queryKey: qk.mcp("httpState") });
-    qc.invalidateQueries({ queryKey: qk.mcp("clients") });
-  };
-  const start = useMutation({
-    mutationFn: () => api.mcpHttpStart(port ? Number(port) : undefined),
-    onSettled: refresh,
-  });
-  const stop = useMutation({ mutationFn: () => api.mcpHttpStop(), onSettled: refresh });
-  const toggleWrite = useMutation({
-    mutationFn: (next: boolean) => api.settingsSet("mcp.write_enabled", next),
-    onSettled: refresh,
-  });
-
-  const copy = async (label: string, text: string) => {
-    await navigator.clipboard.writeText(text);
-    message.success(`已复制：${label}`);
-  };
-  const copyClientConfig = async () => copy("客户端配置", await api.mcpCopyClientConfig());
-  const copyControl = async () => {
-    const c = await api.controlConfig();
-    await copy(
-      "控制端点",
-      `POST http://127.0.0.1:${c.port}/internal/notify\nAuthorization: Bearer ${c.token}`,
-    );
-  };
-
-  const running = data?.http.running ?? false;
-
-  return (
-    <Card title="MCP 集成">
-      <Flex vertical gap={12}>
-        <div className="rounded-md border border-[var(--border-hairline)] p-3">
-          <Space align="center" className="mb-1">
-            <Typography.Text strong>stdio</Typography.Text>
-            <Tag color="success" style={{ marginInlineEnd: 0 }}>
-              始终可用
-            </Tag>
-          </Space>
-          <Typography.Paragraph type="secondary" className="text-xs">
-            每个客户端各自拉起一个实例，无需开关；无需端口与 token。
-          </Typography.Paragraph>
-          <Typography.Text code className="break-all text-[11px]">
-            {data?.stdio.bin_path ?? "…"}
-          </Typography.Text>
-          <div className="mt-2">
-            <Button size="small" icon={<CopyOutlined />} onClick={copyClientConfig}>
-              复制客户端配置
-            </Button>
-          </div>
-        </div>
-
-        <div className="rounded-md border border-[var(--border-hairline)] p-3">
-          <Space align="center" className="mb-1">
-            <Typography.Text strong>HTTP</Typography.Text>
-            <Tag color={running ? "success" : "default"} style={{ marginInlineEnd: 0 }}>
-              {running ? `运行中 · 127.0.0.1:${data?.http.port}` : "已停止"}
-            </Tag>
-          </Space>
-          <Space wrap>
-            <Input
-              size="small"
-              style={{ width: 120 }}
-              placeholder="端口（可选）"
-              value={port}
-              disabled={running}
-              onChange={(e) => setPort(e.target.value.replace(/\D/g, ""))}
-            />
-            <Button type="primary" size="small" disabled={running} onClick={() => start.mutate()}>
-              启用
-            </Button>
-            <Button size="small" disabled={!running} onClick={() => stop.mutate()}>
-              停止
-            </Button>
-            <Button size="small" type="text" icon={<CopyOutlined />} onClick={copyControl}>
-              复制控制端点
-            </Button>
-          </Space>
-          <Typography.Text code className="mt-2 block break-all text-[11px]">
-            token: {data?.http.token || "（未启动）"}
-          </Typography.Text>
-        </div>
-
-        <Space direction="vertical" size={2}>
-          <Space>
-            <Switch
-              checked={data?.write_enabled ?? false}
-              onChange={(v) => toggleWrite.mutate(v)}
-            />
-            <Typography.Text strong>允许 MCP 写入</Typography.Text>
-          </Space>
-          <Typography.Text type="secondary" className="text-[11px]">
-            开启后 AI 客户端可创建/修改/删除任务与项目；所有写入都会记录到 `op_log`，可在数据库
-            `~/.omnitodo/omnitodo.db` 审计。关闭时 MCP 为只读。
-          </Typography.Text>
-        </Space>
       </Flex>
     </Card>
   );

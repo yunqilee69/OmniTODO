@@ -10,6 +10,7 @@ use axum::routing::post;
 use axum::{Json, Router};
 use serde_json::Value;
 use tauri::Emitter;
+use tokio::sync::RwLock;
 
 use omnitodo_core::service::Core;
 use omnitodo_mcp::protocol;
@@ -20,13 +21,15 @@ use crate::state::HttpServerHandle;
 #[derive(Clone)]
 struct Ctx {
     tool: ToolContext,
-    token: String,
+    /// Read per request, so a token changed in Settings applies immediately
+    /// (design §11.2).
+    token: Arc<RwLock<String>>,
     app: tauri::AppHandle,
 }
 
 pub async fn start(
     port: u16,
-    token: String,
+    token: Arc<RwLock<String>>,
     core: Core,
     write_enabled: bool,
     app: tauri::AppHandle,
@@ -57,10 +60,11 @@ pub async fn start(
 }
 
 async fn handle_mcp(State(ctx): State<Ctx>, headers: HeaderMap, body: String) -> impl IntoResponse {
+    let expected = ctx.token.read().await.clone();
     let ok = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
-        .map(|v| v == format!("Bearer {}", ctx.token))
+        .map(|v| v == format!("Bearer {expected}"))
         .unwrap_or(false);
     if !ok {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();

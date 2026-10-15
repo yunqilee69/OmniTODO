@@ -15,6 +15,7 @@ use crate::error::Result;
 
 pub mod attachment;
 pub mod calendar;
+pub mod endpoint;
 pub mod importexport;
 pub mod maintenance;
 pub mod project;

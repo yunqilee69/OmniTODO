@@ -599,7 +599,7 @@ export default {
 | 层 | 落地 |
 |---|---|
 | 主题 | `src/theme/antd.ts`：`buildAntdTheme(light|dark)` 把 §3 调色板映射为 `colorPrimary`（仪表绿）、`colorBgLayout/Container/Elevated`、`colorText*`、`colorBorder*`、`borderRadius`、`fontFamily`、`controlHeight` 等，并按明暗切换 `defaultAlgorithm`/`darkAlgorithm`；`Layout`/`Menu`/`Card`/`Segmented`/`Drawer` 等做了组件级覆盖 |
-| 组件 | 应用壳用 `Layout`+`Sider`+`Menu`；任务行用 `Checkbox`/`Typography.Text(delete,ellipsis)`/`Tag`/`Dropdown`/`DatePicker`/`Tooltip`；详情用 `Drawer`+`Select`/`DatePicker`/`Switch`/`Input.TextArea`/`Popconfirm`；提醒用 `App.useApp().notification`；日历/快速添加/设置用 `Segmented`/`Button`/`Tag`/`Alert`/`Card`/`Upload`/`Switch`；加载/空/错误态用 `Skeleton`/`Empty`/`Alert`；表单校验与反馈用 `Popconfirm`/`message` |
+| 组件 | 应用壳用 `Layout`+`Sider`+`Menu`；任务行用 `Checkbox`/`Typography.Text(delete,ellipsis)`/`Tag`/`Dropdown`/`DatePicker`/`Tooltip`；详情用 `Drawer`+`Select`/`DatePicker`/`Switch`/`Input.TextArea`/`Popconfirm`；提醒用 `App.useApp().notification`；日历/快速添加/设置用 `Segmented`/`Button`/`Tag`/`Alert`/`Card`/`Upload`/`Switch`；设置页的 MCP 面板另用 `Tabs`（按客户端分页）与 `Table`（能力对照表）；加载/空/错误态用 `Skeleton`/`Empty`/`Alert`；表单校验与反馈用 `Popconfirm`/`message` |
 | 自留样式 | `src/index.css` 只保留 antd 不负责的部分：调色板 CSS 变量（供纸纹、优先级圆环色、行悬停使用）、页面底色/字体、细滚动条、纸纹、`tabular` 数字；外加**任务行的自有外观**（§8.3/§8.4）：`.task-row` 的悬停底色、次级操作（`＋日期` / `⋯`）的淡入、添加框的聚焦态，以及把 antd v6 的方形复选框改成圆形并按 `--checkbox-ring` 上色——v6 把边框画在 `.ant-checkbox` 元素本身，旧版的 `.ant-checkbox-inner` 已不存在，`border-width` 需显式覆盖才能到 1.5px。§4/§5 的字阶、间距、圆角仍由 antd token 表达；§5.4 的 `--e1/--e2/--e3` 在 `index.css` 定义为 CSS 变量、由 `tailwind.config.js` 的 `boxShadow.e*` 映射成 `shadow-e*` 工具类（`--e0` 即"无类"，默认不写） |
 | 图标 | 全部改用 `@ant-design/icons`（替换原先的手写 SVG 与 emoji） |
 | 主题切换 | 明/暗/跟随系统；写 `[data-theme]` 供自留 CSS 变量，同时驱动 antd algorithm；持久化到 `settings.ui.theme` |

@@ -17,4 +17,7 @@ export const qk = {
   reportAll: ["report"] as const,
   report: (query: unknown) => ["report", query] as const,
   mcp: (key: string) => ["mcp", key] as const,
+  /** Every MCP query: the status, the config snippets and the args line all
+   *  derive from the same server state, so a token change moves all of them. */
+  mcpAll: ["mcp"] as const,
 };
