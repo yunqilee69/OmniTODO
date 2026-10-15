@@ -2,12 +2,14 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Button } from "antd";
 import { HolderOutlined } from "@ant-design/icons";
+import { rowPaddingLeft } from "../lib/layout";
 import TaskRow, { type TaskRowProps } from "./TaskRow";
 
 /** Task row wired into the app-level sortable context (design §13.2). */
 export default function SortableTaskRow(props: TaskRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.task.id,
+    data: { indent: rowPaddingLeft(props.depth ?? 0) },
   });
 
   return (

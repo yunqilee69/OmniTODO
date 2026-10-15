@@ -257,7 +257,21 @@ impl Core {
         } else {
             pick(patch.project_id, &current.project_id)
         };
-        let parent_id = patch.parent_id.or_else(|| current.parent_id.clone());
+        // Resolved before the write, applied after it: the checks must fail the
+        // whole update, but the project move waits until the new parent sticks.
+        let reparent = if patch.clear_parent_id {
+            None
+        } else {
+            patch.parent_id.clone()
+        };
+        let parent_id = if patch.clear_parent_id {
+            None
+        } else if let Some(pid) = &reparent {
+            self.ensure_parent(pid, id).await?;
+            Some(pid.clone())
+        } else {
+            current.parent_id.clone()
+        };
         let start_at = if patch.clear_start_at {
             None
         } else {
@@ -348,6 +362,14 @@ impl Core {
         .bind(id)
         .execute(&self.pool)
         .await?;
+
+        // Only once the new parent is stored does the subtree follow it into
+        // its project — doing it earlier would strand the children there if
+        // the update itself then failed.
+        if let Some(pid) = &reparent {
+            let parent = self.fetch_task_row(pid).await?;
+            self.reassign_project(id, parent.project_id.as_deref()).await?;
+        }
 
         if let Some(names) = patch.tag_names {
             let tags = self.ensure_tags(&names).await?;
@@ -459,19 +481,12 @@ impl Core {
             }
             None => current.project_id.clone(),
         };
-        let new_parent = match parent_id {
-            Some(p) => {
-                if let Some(pid) = &p {
-                    self.ensure_task_exists(pid).await?;
-                    if pid == id {
-                        return Err(CoreError::Validation("task cannot be its own parent".into()));
-                    }
-                    if self.is_descendant(id, pid).await? {
-                        return Err(CoreError::Validation("cannot move task under its descendant".into()));
-                    }
-                }
-                p
+        let new_parent = match &parent_id {
+            Some(Some(pid)) => {
+                self.ensure_parent(pid, id).await?;
+                Some(pid.clone())
             }
+            Some(None) => None,
             None => current.parent_id.clone(),
         };
         let order = sort_order.unwrap_or(current.sort_order);
@@ -486,6 +501,12 @@ impl Core {
         .bind(id)
         .execute(&self.pool)
         .await?;
+        // The subtree takes the *parent's* project, which wins over the project
+        // the caller named: a child cannot live in a different project.
+        if let Some(Some(pid)) = &parent_id {
+            let parent = self.fetch_task_row(pid).await?;
+            self.reassign_project(id, parent.project_id.as_deref()).await?;
+        }
         self.op_log("task", id, "update", json!({ "moved": true }))
             .await?;
         self.get_task(id).await
@@ -518,6 +539,60 @@ impl Core {
             }
         }
         tx.commit().await?;
+        Ok(())
+    }
+
+    /// The checks a reparent always needs, before anything is written: the
+    /// parent exists, the move isn't into the task's own subtree, and it
+    /// doesn't push the branch past the depth cap (§5.5).
+    async fn ensure_parent(&self, parent_id: &Id, id: &Id) -> Result<()> {
+        self.ensure_task_exists(parent_id).await?;
+        if parent_id == id {
+            return Err(CoreError::Validation("task cannot be its own parent".into()));
+        }
+        if self.is_descendant(id, parent_id).await? {
+            return Err(CoreError::Validation("cannot move task under its descendant".into()));
+        }
+        // The cap is on the deepest row, not the parent: a branch dragged under
+        // a row carries its own depth with it (§5.5).
+        let parent_depth = self.subtree_depth(parent_id).await?;
+        let branch_depth = self.descendant_depth(id).await?;
+        if parent_depth + 1 + branch_depth > 5 {
+            return Err(CoreError::Validation("subtask depth limit (5) reached".into()));
+        }
+        Ok(())
+    }
+
+    /// How many levels of children hang off `id` (0 for a leaf).
+    async fn descendant_depth(&self, id: &Id) -> Result<i64> {
+        let row: (i64,) = sqlx::query_as(
+            "WITH RECURSIVE sub(id, d) AS ( \
+               SELECT id, 0 FROM tasks WHERE parent_id = ? AND deleted_at IS NULL \
+               UNION ALL \
+               SELECT t.id, sub.d + 1 FROM tasks t JOIN sub ON t.parent_id = sub.id \
+                 WHERE t.deleted_at IS NULL \
+             ) SELECT COALESCE(MAX(d), -1) + 1 FROM sub",
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.0)
+    }
+
+    /// Point `id` and everything under it at `project_id`. A task and its
+    /// children answer to one project, so a reparent never splits them.
+    async fn reassign_project(&self, id: &Id, project_id: Option<&str>) -> Result<()> {
+        sqlx::query(
+            "WITH RECURSIVE sub(id) AS ( \
+               SELECT id FROM tasks WHERE id = ? \
+               UNION \
+               SELECT t.id FROM tasks t JOIN sub ON t.parent_id = sub.id WHERE t.deleted_at IS NULL \
+             ) UPDATE tasks SET project_id = ? WHERE id IN (SELECT id FROM sub)",
+        )
+        .bind(id)
+        .bind(project_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 

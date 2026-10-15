@@ -15,6 +15,8 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragMoveEvent,
+  type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
@@ -23,7 +25,9 @@ import { Card } from "antd";
 import { useState, type ReactNode } from "react";
 import { api, type Page, type TaskDto } from "../api/client";
 import { qk } from "../api/queryKeys";
-import { moveItem, reorderSubsequence } from "../lib/reorder";
+import { ROW_INDENT_STEP, rowPaddingLeft, rowRuleInset } from "../lib/layout";
+import { resolveDropIntent, nestMove, type DropIntent, type DropTarget } from "../lib/nestDrop";
+import { reorderSubsequence } from "../lib/reorder";
 
 /** Droppable id for a sidebar project row. */
 export const projectDropId = (projectId: string) => `project:${projectId}`;
@@ -83,9 +87,41 @@ export function findCachedSiblings(
 }
 
 
+/** Where the drop line is drawn, in viewport coordinates. */
+interface DropLine {
+  top: number;
+  left: number;
+  width: number;
+  /** A child slot nests under the row; a sibling slot reorders beside it. */
+  child: boolean;
+}
+
+/**
+ * Pointer position inside the hovered row, from the translated rect dnd-kit
+ * reports. `activatorEvent` is where the drag *started*, so the live position
+ * is that plus `delta`.
+ */
+function pointerInRow(event: DragMoveEvent | DragEndEvent): { x: number; y: number } | null {
+  const over = event.over?.rect;
+  const start = event.activatorEvent;
+  if (!over || !(start instanceof MouseEvent)) return null;
+  return {
+    x: start.clientX + event.delta.x - over.left,
+    y: start.clientY + event.delta.y - over.top,
+  };
+}
+
+/** The hovered row's own left padding, stashed on it by `SortableTaskRow`. */
+function rowIndent(event: DragMoveEvent | DragEndEvent): number {
+  const indent = event.over?.data.current?.indent;
+  return typeof indent === "number" ? indent : rowPaddingLeft(0);
+}
+
 export function TaskDndProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const [draggingTask, setDraggingTask] = useState<TaskDto | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+  const [dropLine, setDropLine] = useState<DropLine | null>(null);
 
   const sensors = useSensors(
     // A small distance threshold keeps plain clicks (open / complete) working.
@@ -93,14 +129,52 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  const clearDrag = () => {
+    setDraggingTask(null);
+    setDropTarget(null);
+    setDropLine(null);
+  };
+
   const onDragStart = (event: DragStartEvent) => {
     setDraggingTask(findCachedTask(qc, String(event.active.id)));
   };
 
+  /** Track the landing slot while the pointer moves, and draw its line. */
+  const trackDrop = (event: DragMoveEvent) => {
+    const overId = event.over ? String(event.over.id) : null;
+    if (!overId || isProjectDropId(overId) || overId === String(event.active.id)) {
+      setDropTarget(null);
+      setDropLine(null);
+      return;
+    }
+    const pointer = pointerInRow(event);
+    const rect = event.over?.rect;
+    if (!pointer || !rect) return;
+    const indent = rowIndent(event);
+    const intent = resolveDropIntent(pointer.y, rect.height, pointer.x, indent);
+    setDropTarget({ overId, intent });
+    // A child slot's line starts one indent step in from the row's own rule,
+    // which is the same place the new child's title will sit.
+    const inset = intent === "child" ? ROW_INDENT_STEP : 0;
+    setDropLine({
+      top: rect.top + (intent === "before" ? 0 : rect.height),
+      left: rect.left + rowRuleInset(0) - rowPaddingLeft(0) + indent + inset,
+      width: Math.max(0, rect.width - (rowRuleInset(0) - rowPaddingLeft(0)) - indent - inset),
+      child: intent === "child",
+    });
+  };
+
+  const onDragOver = (event: DragOverEvent) => trackDrop(event);
+
   const onDragEnd = async (event: DragEndEvent) => {
-    setDraggingTask(null);
     const activeId = String(event.active.id);
     const overId = event.over ? String(event.over.id) : null;
+    // Recompute at release: the last move may have landed between events.
+    const pointer = pointerInRow(event);
+    const rect = event.over?.rect;
+    const intent: DropIntent =
+      pointer && rect ? resolveDropIntent(pointer.y, rect.height, pointer.x, rowIndent(event)) : (dropTarget?.intent ?? "after");
+    clearDrag();
     if (!overId || overId === activeId) return;
 
     // Dropped on a project in the sidebar: move it there, appending to the end.
@@ -113,13 +187,26 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Dropped on a sibling: persist the new manual order of that group.
+    // Pushed in past the row's indent: file it as that row's first child. This
+    // is the one drop that crosses groups — a task can land under any visible
+    // row, not only beside its current siblings. `task_move` cannot change the
+    // parent (it only relocates between projects), so the parent goes through
+    // the patch, and the core then pulls the subtree into the parent's project.
+    if (intent === "child") {
+      if (!findCachedTask(qc, overId)) return;
+      await api.taskUpdate(activeId, { parent_id: overId, sort_order: 0 });
+      qc.invalidateQueries({ queryKey: qk.tasksAll });
+      qc.invalidateQueries({ queryKey: qk.subtasksAll });
+      qc.invalidateQueries({ queryKey: qk.taskAll });
+      qc.invalidateQueries({ queryKey: qk.projects });
+      return;
+    }
+
+    // Otherwise it stays a sibling: persist the new manual order of that group.
     const group = findCachedSiblings(qc, activeId);
     if (!group || !group.ids.includes(overId)) return;
-    const from = group.ids.indexOf(activeId);
-    const to = group.ids.indexOf(overId);
-    const next = moveItem(group.ids, from, to);
-    if (next.join() === group.ids.join()) return;
+    const next = nestMove(group.ids, activeId, overId, intent);
+    if (!next) return;
 
     // Show the new order straight away; the refetch below confirms it. A
     // subtask group is a subsequence of its branch cache, so only the group's
@@ -141,10 +228,18 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
       sensors={sensors}
       collisionDetection={closestCenter}
       onDragStart={onDragStart}
+      onDragMove={trackDrop}
+      onDragOver={onDragOver}
       onDragEnd={onDragEnd}
-      onDragCancel={() => setDraggingTask(null)}
+      onDragCancel={clearDrag}
     >
       {children}
+      {dropLine ? (
+        <div
+          className={`drop-line${dropLine.child ? " is-child" : ""}`}
+          style={{ top: dropLine.top, left: dropLine.left, width: dropLine.width }}
+        />
+      ) : null}
       <DragOverlay dropAnimation={null}>
         {draggingTask ? (
           <Card size="small" className="cursor-grabbing shadow-lg">

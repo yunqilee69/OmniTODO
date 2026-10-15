@@ -142,6 +142,8 @@ export interface TaskPatch {
   sort_order?: number;
   tag_names?: string[];
   clear_project_id?: boolean;
+  /** Lift the task to the top level. Leaving `parent_id` unset keeps it. */
+  clear_parent_id?: boolean;
   clear_start_at?: boolean;
   clear_due_at?: boolean;
   clear_remind_at?: boolean;
@@ -264,7 +266,13 @@ export const api = {
     invoke<TaskDto>("task_add_subtask", { parentId, input }),
   taskBulkUpdate: (ids: Id[], patch: TaskPatch) =>
     invoke<number>("task_bulk_update", { ids, patch }),
-  /** Move across projects / parents, or set an explicit sort position. */
+  /**
+   * Move across projects / parents, or set an explicit sort position.
+   *
+   * `parentId` is only honoured by the core's `move_task` when it is a real id
+   * (passing `null` is read as "leave the parent"), so nesting goes through
+   * here and un-nesting goes through `taskUpdate` with `clear_parent_id`.
+   */
   taskMove: (id: Id, projectId?: Id | null, parentId?: Id | null, sortOrder?: number) =>
     invoke<TaskDto>("task_move", { id, projectId, parentId, sortOrder }),
   /** Persist the order of a dragged list (pairs with `sort: "manual"`). */

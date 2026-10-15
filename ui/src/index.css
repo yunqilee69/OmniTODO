@@ -217,6 +217,30 @@
   .task-row.is-dragging .row-action {
     opacity: 1;
   }
+
+  /* The drop line (Todoist-style). It is a fixed overlay rather than part of a
+     row, because the slot it marks sits *between* rows and shifts one indent
+     step right when the drop would file the task as a child. The dot is the
+     depth marker: level with a sibling's rule, or one step in for a child. */
+  .drop-line {
+    position: fixed;
+    z-index: 1000;
+    height: 2px;
+    margin-top: -1px;
+    background: var(--accent);
+    pointer-events: none;
+  }
+  .drop-line::before {
+    content: "";
+    position: absolute;
+    top: -3px;
+    left: -4px;
+    width: 8px;
+    height: 8px;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    background: var(--bg-surface);
+  }
   /* Borderless date control reads as a meta chip, not a form field. */
   .task-date .ant-picker-input > input {
     font-size: 12px;

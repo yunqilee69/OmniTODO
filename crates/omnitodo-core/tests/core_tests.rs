@@ -316,6 +316,87 @@ async fn subtasks_depth_and_listing() {
 }
 
 #[tokio::test]
+async fn reparent_follows_the_parent_project_and_keeps_the_branch() {
+    let (core, _d) = core().await;
+    let project = core
+        .create_project(CreateProjectInput {
+            name: "Work".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let parent = core
+        .create_task(CreateTaskInput {
+            title: "parent".into(),
+            project_id: Some(project.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let moved = core
+        .create_task(CreateTaskInput {
+            title: "moved".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let child = core
+        .add_subtask(
+            &moved.id,
+            CreateTaskInput {
+                title: "child".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // The drag files a task under another through the same patch the row uses.
+    let patched = core
+        .update_task(
+            &moved.id,
+            TaskPatch {
+                parent_id: Some(parent.id.clone()),
+                sort_order: Some(0),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(patched.parent_id.as_deref(), Some(parent.id.as_str()));
+    assert_eq!(patched.project_id.as_deref(), Some(project.id.as_str()));
+    // The branch comes along: a grandchild answers to the new project too.
+    let child = core.get_task(&child.id).await.unwrap();
+    assert_eq!(child.project_id.as_deref(), Some(project.id.as_str()));
+
+    // Lifting back to the top level is a flag, not a null parent id.
+    let lifted = core
+        .update_task(
+            &moved.id,
+            TaskPatch {
+                clear_parent_id: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(lifted.parent_id, None);
+
+    // A branch cannot be dropped under its own descendant through the patch.
+    let err = core
+        .update_task(
+            &moved.id,
+            TaskPatch {
+                parent_id: Some(child.id.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(format!("{err}").contains("descendant"));
+}
+
+#[tokio::test]
 async fn subtask_progress_rolls_up_the_whole_subtree() {
     let (core, _d) = core().await;
     let root = core

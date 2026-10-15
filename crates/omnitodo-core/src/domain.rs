@@ -452,6 +452,10 @@ pub struct TaskPatch {
 
     #[serde(default)]
     pub clear_project_id: bool,
+    /// Move the task to the top level (no parent). Distinct from leaving
+    /// `parent_id` unset, which means "don't touch the parent".
+    #[serde(default)]
+    pub clear_parent_id: bool,
     #[serde(default)]
     pub clear_start_at: bool,
     #[serde(default)]
