@@ -18,7 +18,12 @@ pub struct Bucket {
 pub struct ReportSummary {
     pub total: i64,
     pub open: i64,
+    /// Live tasks currently `done`. Not bounded by `from`/`to`.
     pub completed: i64,
+    /// Rows in `task_completions` inside `from`/`to`. Soft-deleted tasks are
+    /// excluded, so this is the sum of `throughput` rather than a second count
+    /// of `completed`.
+    pub completed_in_window: i64,
     pub overdue: i64,
     pub due_soon: i64,
     pub by_project: Vec<Bucket>,
@@ -99,20 +104,28 @@ pub async fn summary(
     .await?;
 
     // Throughput from completion history, bucketed by day or month.
+    // Only completions whose task is still live: a soft-deleted task stays in
+    // `task_completions`, and counting it makes the window disagree with the
+    // snapshot above.
     let fmt = if group_by_day { "%Y-%m-%d" } else { "%Y-%m" };
     let throughput: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT strftime(?, completed_at / 1000, 'unixepoch') AS period, COUNT(*) \
-         FROM task_completions WHERE completed_at BETWEEN ? AND ? GROUP BY period ORDER BY period",
+        "SELECT strftime(?, c.completed_at / 1000, 'unixepoch') AS period, COUNT(*) \
+         FROM task_completions c \
+         JOIN tasks t ON t.id = c.task_id AND t.deleted_at IS NULL \
+         WHERE c.completed_at BETWEEN ? AND ? GROUP BY period ORDER BY period",
     )
     .bind(fmt)
     .bind(from_ms)
     .bind(to_ms)
     .fetch_all(&core.pool)
     .await?;
+    let completed_in_window: i64 = throughput.iter().map(|(_, n)| n).sum();
 
     let avg_row = sqlx::query(
-        "SELECT AVG(completed_at - (SELECT created_at FROM tasks t WHERE t.id = c.task_id)) AS avg_ms \
-         FROM task_completions c WHERE c.completed_at BETWEEN ? AND ?",
+        "SELECT AVG(c.completed_at - t.created_at) AS avg_ms \
+         FROM task_completions c \
+         JOIN tasks t ON t.id = c.task_id AND t.deleted_at IS NULL \
+         WHERE c.completed_at BETWEEN ? AND ?",
     )
     .bind(from_ms)
     .bind(to_ms)
@@ -123,9 +136,11 @@ pub async fn summary(
         .map(|v| v as i64);
 
     let on_time_row = sqlx::query(
-        "SELECT SUM(CASE WHEN was_on_time = 1 THEN 1 ELSE 0 END) AS ok, \
-                SUM(CASE WHEN was_on_time IS NOT NULL THEN 1 ELSE 0 END) AS total \
-         FROM task_completions WHERE completed_at BETWEEN ? AND ?",
+        "SELECT SUM(CASE WHEN c.was_on_time = 1 THEN 1 ELSE 0 END) AS ok, \
+                SUM(CASE WHEN c.was_on_time IS NOT NULL THEN 1 ELSE 0 END) AS total \
+         FROM task_completions c \
+         JOIN tasks t ON t.id = c.task_id AND t.deleted_at IS NULL \
+         WHERE c.completed_at BETWEEN ? AND ?",
     )
     .bind(from_ms)
     .bind(to_ms)
@@ -166,6 +181,7 @@ pub async fn summary(
         total,
         open,
         completed,
+        completed_in_window,
         overdue,
         due_soon,
         by_project,

@@ -168,7 +168,10 @@ export interface QuickAddDraft {
 export interface ReportSummary {
   total: number;
   open: number;
+  /** Live tasks currently done. Not bounded by the report window. */
   completed: number;
+  /** Completions of live tasks inside the window; the sum of `throughput`. */
+  completed_in_window: number;
   overdue: number;
   due_soon: number;
   by_project: { key: string; open: number; completed: number; overdue: number }[];
@@ -179,12 +182,28 @@ export interface ReportSummary {
   on_time_rate: number | null;
 }
 
+/** Which loopback token a settings action targets (design §4.5/§11.2). */
+export type McpTokenKind = "control" | "http";
+
+/** Lifecycle of the loopback control endpoint. */
+export type McpControlState = "starting" | "listening" | "failed";
+
 export interface McpStatus {
-  stdio: { bin_path: string; always_available: boolean };
+  /** Version of the bundled sidecar (same workspace version as the app). */
+  version: string;
+  stdio: { bin_path: string; exists: boolean; always_available: boolean };
   http: { running: boolean; port: number; token: string };
   /** Loopback endpoint external MCP instances call after a write (design §4.5). */
-  control: { port: number; token: string };
+  control: {
+    port: number;
+    token: string;
+    state: McpControlState;
+    /** Why the bind failed, when `state` is `failed`. */
+    error: string | null;
+  };
   write_enabled: boolean;
+  db_path: string;
+  data_dir: string;
 }
 
 export interface CalendarItemDto {
@@ -315,7 +334,16 @@ export const api = {
   mcpStatus: () => invoke<McpStatus>("mcp_status"),
   mcpHttpStart: (port?: number) => invoke<void>("mcp_http_start", { port }),
   mcpHttpStop: () => invoke<void>("mcp_http_stop"),
+  /** The `mcpServers` shape most clients read (absolute `command`). */
   mcpCopyClientConfig: () => invoke<string>("mcp_copy_client_config"),
+  /** ZCode's own shape: `~/.zcode/cli/config.json` → `mcp.servers`. */
+  mcpZcodeConfig: () => invoke<string>("mcp_zcode_config"),
+  /** One line for ZCode's "参数（空格分隔）" form field. */
+  mcpArgsLine: () => invoke<string>("mcp_args_line"),
+  mcpSetToken: (kind: McpTokenKind, token: string) =>
+    invoke<void>("mcp_set_token", { kind, token }),
+  mcpRegenerateToken: (kind: McpTokenKind) =>
+    invoke<string>("mcp_regenerate_token", { kind }),
   controlConfig: () => invoke<{ port: number; token: string }>("control_config"),
   appVersion: () => invoke<string>("app_version"),
   appReleasesUrl: () => invoke<string>("app_releases_url"),

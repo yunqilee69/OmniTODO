@@ -1,3 +1,63 @@
+## 2026-10-15 MCP 工具返回形状与过滤入参修复
+
+装上包实测 MCP 后反馈的一组问题，根因都是工具层没把调用方当外人：
+
+- **列表工具返回数组，被客户端整条拦掉**。`structuredContent` 必须是 JSON 对象，
+  `list_projects`/`list_tags`/`list_upcoming`/`list_calendar`/`list_subtasks`/
+  `list_attachments`/`list_due_reminders` 返回的是 `Vec`，客户端报
+  `expected record, received array` 并连 `content` 文本一起丢弃，所以看起来"调用直接失败、
+  内容也看不到"。现在统一包成 `{items, count}`，协议层再兜一道（真收到数组就包一层），
+  分页类工具返回 `{items, total, limit, offset}`。
+- **列表/搜索/导出查不到已完成任务**。`TaskFilter` 默认 `include_completed=false`，
+  SQL 会加 `status NOT IN ('done','cancelled')`；而调用方传的 `status`、`project`、
+  `project_name`、`project_id`、`completed_from` 都不是 `TaskFilter` 的字段，serde 静默
+  丢弃，于是"成功但空结果"。现在三个工具直接接受扁平的 `scope`（`open`/`completed`/`all`，
+  默认 `open`）、`project`（id 或名称）、`priorities`、`statuses`、`due_*`、`start_*`、
+  `completed_*`、`limit`/`offset`；非法取值报 validation 错误，不再静默。
+  `TaskFilter` 新增 `completed_after`/`completed_before`。
+- **`get_project` 只认 id**。汇总里 `by_project[].key` 给的是项目名，调用方拿不到 id
+  （列表工具又正好在报错）。现在 `id` 走 `resolve_project_id`，id 和名称都能用；
+  名称歧义时报 `AmbiguousProject` 而不是猜一个。
+- **汇总里 7 和 10 对不上**。`completed` 数当前存活任务（不受窗口影响），
+  `throughput` 数 `task_completions` 的完成事件。本机库里 10 条完成记录中有 3 条属于已软删除
+  的任务，于是 `completed=7` 而 throughput 求和为 10。现在 throughput / 平均耗时 / 准时率
+  一律 `JOIN tasks ... deleted_at IS NULL`，并新增 `completed_in_window`，三项之和恒等于它；
+  字段名与工具描述也写明了两套数据集的区别。
+
+验证：`cargo test --workspace` 48 passed（core 38 + mcp 10）；`cargo clippy --workspace
+--all-targets` 0 warning；`cd ui && npm test` 98 passed、`tsc --noEmit` 通过。
+另外用真实二进制对本机 `~/.omnitodo/omnitodo.db` 的副本重放了报告里的调用：
+`list_tasks {scope:completed, project:"智搭"}` 返回 7 条、`list_tasks {}` 返回 0 条、
+`search_tasks {query:"fastjson", scope:completed}` 命中 1 条、
+`export_tasks {scope:completed}` 导出 7 行 CSV、`get_project {id:"智搭"}` 解析到
+`01a132e1-…`、`summary_report {days:7}` 给出 `completed=7` / `completed_in_window=7` /
+`throughput=[["2026-10-15",7]]`、`scope:"nope"` 报 validation 错误。
+
+## 2026-10-15 MCP 控制端点 token 持久化与设置面板
+
+两个改动，都是配 MCP 时暴露的：
+
+- **token 持久化**。`control_token` / `http_token` 原先每次启动重新生成，填进客户端
+  配置的值下次启动即失效。现在存 SQLite `settings` 表（`mcp.control_token` /
+  `mcp.http_token`），首次启动生成一次，之后保持不变；设置页可修改或重新生成，
+  改完立即生效（端点每个请求现读 `Arc<RwLock<String>>`，不需要重启应用）。
+  校验限 16–128 字符、`[A-Za-z0-9_-]`，因为 token 要放进 `Authorization: Bearer` 头。
+- **设置页 MCP 面板重构**（`ui/src/components/McpPanel.tsx`）：状态四宫格（侧车版本、
+  二进制绝对路径 + 是否检测到、数据目录、控制端点状态）、能力对照表（13 只读 / 7 写工具）、
+  按客户端分页的 stdio 配置（ZCode 的嵌套 `mcp.servers` 与通用 `mcpServers`）、
+  可编辑的 token。顺手修了两个真 bug：复制出来的 `command` 是绝对路径而不是裸文件名，
+  token 不再带引号（引号会原样进进程参数，回调一律 401）。
+
+设计文档 §4.4 原来说端口/token 存 `config.json`，理由是「进程启动前就要读到」，
+但端点都在 `Core::open_default()` 之后才起，该理由不成立，已改为统一存 `settings` 表。
+
+验证：`cargo test --workspace` 44 passed（core 37 + mcp 7）；`cargo clippy --workspace --all-targets`
+0 warning；`cargo test`（omnitodo-desktop）10 passed（含 `mcp_config` 的 5 个）；
+`cargo clippy`（omnitodo-desktop）仅剩
+一处改动前就有的 `tray.rs` unused import；`cd ui && npm test` 98 passed、`tsc --noEmit` 通过。
+设置页用 stub IPC 在浏览器里走了一遍：带引号的 token 被拒绝且保存按钮禁用、保存后 ZCode 片段
+与参数行同步换成新 token、重新生成需二次确认且片段跟随、通用 JSON 页签是顶层 `mcpServers` 形状、
+写入开关即时改变能力表的勾叉颜色。
 # 实现进度（对照设计 §16 交付分期）
 
 本机无 GUI 环境，但**页面级冒烟已用虚拟显示（Xvfb）真实跑通**：启动打包好的应用、

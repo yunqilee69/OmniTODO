@@ -153,17 +153,23 @@ MCP 的 stdio 传输要求**客户端自己拉起子进程**（Cursor / Claude D
 .omnitodo/                    # 应用数据目录（见上表）
 ├── omnitodo.db             # SQLite（WAL 伴生 omnitodo.db-wal / -shm）；blob 模式附件的二进制在库内
 ├── attachments/            # managed 模式附件的托管目录：ab/cd/<sha256> 内容寻址
-├── logs/
-└── config.json             # MCP 端口/token、内部控制端点端口/token 等"启动前就要读到"的运行时配置
+└── logs/
 ```
 
-> 应用设置（主题、默认项目、MCP 写开关、HTTP 端口/token 等）统一存 SQLite `settings` 表，保证单一数据源；`config.json` 只放进程启动前就需要读到的信息（MCP HTTP 端口/token、桌面内部控制端点端口/token）。
+> 应用设置统一存 SQLite `settings` 表，保证单一数据源：主题、默认项目、MCP 写开关，
+> 以及两个回环端点的 token（`mcp.control_token` 内部控制端点、`mcp.http_token` 内嵌
+> MCP HTTP 服务）。两个 token 首次启动时生成一次并落库，之后保持不变，可在设置页修改，
+> 修改后立即生效（见 §4.5）。
+>
+> 早期草案曾把端口/token 放进 `config.json`，理由是「进程启动前就要读到」。实际上这两个
+> 端点都在 `Core::open_default()` 之后才启动，库早已打开，该理由不成立，故不再引入第二个
+> 存储。`config.json` 保留给未来真正需要早于数据库读取的项。
 
 ### 4.5 跨进程刷新：MCP 主动回调（取代轮询）
 
 stdio 与独立 HTTP 的 MCP 是**独立进程**，无法直接向桌面应用 emit Tauri 事件。约定如下：
 
-- 桌面应用在 `127.0.0.1:<control_port>` 暴露一个**内部控制端点**（token 保护，端口/token 存 `config.json`）：`POST /internal/notify`，body 形如 `{ "source": "mcp", "events": [{ "type": "task:updated", "id": "…" }] }`。
+- 桌面应用在 `127.0.0.1:<control_port>` 暴露一个**内部控制端点**（token 保护，token 存 `settings.mcp.control_token`，可在设置页修改并立即生效——端点每个请求现读 token，不需要重启应用）：`POST /internal/notify`，body 形如 `{ "source": "mcp", "events": [{ "type": "task:updated", "id": "…" }] }`。已拉起的 MCP 客户端进程手里仍是旧 token，需要重连才恢复回调。
 - MCP **写工具提交事务成功后**调用该端点，把受影响实体与事件类型报给应用；应用收到后转发为前端可订阅的 Tauri 事件（§8.2），前端据此 invalidate 对应 Query key。
 - 应用未运行 / 端点不可达时，MCP **忽略回调失败**（连接被拒即跳过），**不影响写事务本身**；此时也没有 UI 需要刷新。
 - 兜底：前端在**窗口重新获得焦点**时对当前视图做一次轻量重新校验（**非轮询**），覆盖回调丢失的极端情况。
@@ -578,6 +584,7 @@ React 组件 → invoke('task_list', {filter})
 
 ```
 total, open, completed, overdue, due_soon(7d),
+completed_in_window,                       # from/to 内、且任务仍在的完成数
 by_project[{project, open, completed, overdue}],
 by_priority[{priority, count}],
 by_status[{status, count}],
@@ -589,6 +596,8 @@ upcoming_list[TaskDto]
 ```
 
 设计要点：聚合在 **Rust 侧用 SQL 完成**（`GROUP BY` + 时间分桶），不把全量任务吐出去让别人算——既省 token 又保证数字一致。应用本身不做任何 LLM 润色；需要"人话周报"时由外部 agent 消费这份结构化结果自行生成（见 §11）。
+
+**两套数据集，字段名要自己说清楚**：`total`/`open`/`completed`/`overdue`/`due_soon` 与 `by_*` 是**当前存活任务**（`deleted_at IS NULL`）的快照，不受 `from`/`to` 影响；`completed_in_window`/`throughput`/`avg_time_to_complete_ms`/`on_time_rate` 只看 `from`/`to` 窗口内的**完成事件**，且只统计任务仍存在的记录。`completed` 与 `completed_in_window` 因此可以不等——前者是"现在有多少件处于完成态"，后者是"这段时间完成了多少件"，软删除的任务会从后者中扣除。`throughput` 各项之和恒等于 `completed_in_window`。
 
 ---
 
@@ -604,12 +613,21 @@ omnitodo-mcp --db "~/.omnitodo/omnitodo.db"              # 默认只读
 omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 ```
 
-客户端配置示例（UI 设置页提供"复制配置"按钮，自动填入真实绝对路径）：
+客户端配置示例（设置页按客户端分页给出，自动填入侧车的**绝对路径**与当前 token）：
 
 ```json
-{ "mcpServers": { "omnitodo": { "command": "omnitodo-mcp",
-  "args": ["--db", "/Users/me/.omnitodo/omnitodo.db"] } } }
+{ "mcp": { "servers": { "OmniTODO": { "type": "stdio",
+  "command": "C:\\Program Files\\OmniTODO\\omnitodo-mcp.exe",
+  "args": ["--db", "C:\\Users\\me\\.omnitodo\\omnitodo.db",
+           "--notify", "http://127.0.0.1:8788/internal/notify",
+           "--notify-token", "<token>"] } } } }
 ```
+
+> 两处容易配错：`command` 必须是绝对路径（侧车随安装包放在应用目录下，不在 `PATH` 上，
+> 且客户端配置文件不做 `${}` 展开）；`--notify-token` 的值**不要加引号**——`args` 是数组、
+> 直接交给进程，引号会成为 token 的一部分，回调会被 401 拒绝。ZCode 的主配置文件用上面的
+> 嵌套 `mcp.servers` 形状（`~/.zcode/cli/config.json`）；`.agents/mcp.json` 与多数其他
+> 客户端用顶层 `mcpServers`，设置页的「通用 JSON」页签给的是那一份。
 
 ### 11.2 stdio 与 HTTP 可同时启用（不存在"模式切换"）
 
@@ -633,18 +651,36 @@ omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 
 | 工具 | 说明 |
 |---|---|
-| `list_projects` | 项目列表 + 各项目 open/completed/overdue 计数 |
-| `get_project` | 单个项目详情与统计 |
-| `list_tasks` | 按 `TaskFilter` 全量过滤，分页 |
+| `list_projects` | 项目列表 + 各项目 open/completed/overdue 计数。返回 `{items, count}` |
+| `get_project` | 单个项目详情与统计。`id` 可以是项目 id，也可以是项目名 |
+| `list_tasks` | 任务列表，分页。**默认只返回未完成**（`todo`/`in_progress`），见下方过滤参数 |
 | `get_task` | 单任务详情：子任务、标签、附件元数据、重复规则 |
-| `list_subtasks` | 指定任务的全部（递归）子任务 |
-| `list_tags` | 标签 + 使用计数 |
-| `search_tasks` | 全文检索（FTS5 / LIKE 回退），可叠加过滤 |
-| `list_upcoming` | 未来 N 天内的开始/截止任务 |
-| `list_due_reminders` | 未来提醒计划（含重复展开） |
-| `list_attachments` | 附件元数据（文件名、大小、sha256、blob/managed、托管路径；**不返回二进制**） |
+| `list_subtasks` | 指定任务的全部（递归）子任务。返回 `{items, count}` |
+| `list_tags` | 标签 + 使用计数。返回 `{items, count}` |
+| `search_tasks` | 全文检索（FTS5 / LIKE 回退）。过滤参数与 `list_tasks` 相同，默认同样只搜未完成 |
+| `list_upcoming` | 未来 N 天内未完成的开始/截止任务。返回 `{items, count}` |
+| `list_due_reminders` | 未来提醒计划（含重复展开）。返回 `{items, count}` |
+| `list_attachments` | 附件元数据（文件名、大小、sha256、blob/managed、托管路径；**不返回二进制**）。返回 `{items, count}` |
 | `summary_report` | §10 的聚合报告（**核心**） |
-| `export_tasks` | 按过滤条件导出 JSON/CSV/Markdown（仅序列化，不落盘） |
+| `list_calendar` | 窗口内的日历项（已物化任务 + 虚拟重复实例）。返回 `{items, count}` |
+| `export_tasks` | 按过滤条件导出 JSON/CSV/Markdown（仅序列化，不落盘）。过滤与默认范围同 `list_tasks` |
+
+**过滤参数**（`list_tasks`/`search_tasks`/`export_tasks` 共用，扁平传入，不需要包进 `filter` 对象）：
+
+| 参数 | 取值 | 作用 |
+|---|---|---|
+| `scope` | `open`（默认）/ `completed` / `all` | 未完成、已完成（`done`）、全部（含 `cancelled`） |
+| `project` | 项目 id 或名称 | 精确 id 优先，否则按名称大小写不敏感匹配；子串只在唯一命中时接受 |
+| `priorities` | `none`/`low`/`medium`/`high`/`urgent` 数组 | 按优先级过滤 |
+| `statuses` | `todo`/`in_progress`/`done`/`cancelled` 数组 | 精确状态，会覆盖 `scope` |
+| `due_after`/`due_before` | unix 毫秒 | 截止时间范围 |
+| `start_after`/`start_before` | unix 毫秒 | 开始时间范围 |
+| `completed_after`/`completed_before` | unix 毫秒 | 完成时间范围 |
+| `limit`/`offset` | 整数 | 分页，默认每页 100，上限 1000 |
+
+取值非法直接返回 validation 错误，**不静默丢弃**。此前 `status`、`project_name` 这类不存在的字段名会被 serde 忽略，调用方看到的是"成功但空结果"，比报错更难排查。
+
+**返回值一律是 JSON 对象**。MCP 客户端要求 `structuredContent` 为 record，数组会被以 `expected record, received array` 拒绝，连文本内容一起丢弃。列表类工具因此统一包成 `{items, count}`，分页类返回 `{items, total, limit, offset}`。
 
 **写（`settings.mcp.write_enabled=true` 才注册；每次调用写 `mcp_audit`）**
 
@@ -658,7 +694,7 @@ omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 
 ### 11.4 安全边界
 
-- HTTP 仅绑定 `127.0.0.1`，需 `Authorization: Bearer <token>`；token 随机生成存 `config.json`，UI 可见可重置。
+- HTTP 仅绑定 `127.0.0.1`，需 `Authorization: Bearer <token>`；token 存 `settings.mcp.http_token`，首次启动生成一次，设置页可见可重置，修改后立即生效。
 - stdio 默认以 `SQLITE_OPEN_READONLY` 打开 DB（不写数据；仍需数据目录可写以维护 `-shm`，§4.3）。
 - 写工具默认不注册；开启后仍受 `mcp_audit` 审计。
 - 内部控制端点（§4.5）同样只绑定 `127.0.0.1` 且需 token，仅接受本机 MCP 的"刷新通知"，不返回任何数据。
@@ -824,7 +860,7 @@ omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 5. `#项目名` 选择框在用户取消时，该片段回退为标题文本，任务进 Inbox。
 6. 简写解析的模糊匹配阈值（编辑距离/前缀）在实现时标定，默认偏保守（宁可不匹配也不误匹配）。
 7. 重复期次默认全量补齐物化；单系列一次补齐上限默认 200 行，超出时保留系列锚点并在 UI 提示。
-8. 内部控制端点（MCP 写回调，§4.5）默认端口 `8788`，与 MCP HTTP 的 `8787` 区分；token 自动生成、随 `config.json`。
+8. 内部控制端点（MCP 写回调，§4.5）默认端口 `8788`，与 MCP HTTP 的 `8787` 区分；token 首次启动生成一次，存 `settings.mcp.control_token`，设置页可修改并立即生效。
 9. 附件托管目录取 `<数据目录>/.omnitodo/attachments/`（**已定**：随应用数据目录，不放工作区/项目目录）。
 10. v1 不提供软删除恢复入口（`deleted_at` 主要服务于将来的同步墓碑）。
 11. 全天任务按"民用日期在 UTC 的零点"存储，展示与重复计算不做时区换算（§5.1）。

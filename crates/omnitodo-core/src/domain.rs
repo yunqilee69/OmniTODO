@@ -520,6 +520,13 @@ pub struct TaskFilter {
     pub start_before: Option<i64>,
     #[serde(default)]
     pub start_after: Option<i64>,
+    /// Completion window, matched against `completed_at`. Unlike the due/start
+    /// bounds this one only ever matches closed tasks, so it is a way to ask
+    /// "what did I finish between X and Y".
+    #[serde(default)]
+    pub completed_after: Option<i64>,
+    #[serde(default)]
+    pub completed_before: Option<i64>,
     #[serde(default)]
     pub has_attachments: Option<bool>,
     #[serde(default)]

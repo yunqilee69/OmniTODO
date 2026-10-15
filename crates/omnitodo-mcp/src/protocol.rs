@@ -38,14 +38,25 @@ pub async fn handle_message(ctx: &ToolContext, msg: &Value) -> Option<Value> {
                 Err((-32602, "missing tool name".to_string()))
             } else {
                 match tools::call_tool(ctx, name, &args).await {
-                    Ok(value) => Ok(json!({
-                        "content": [{
-                            "type": "text",
-                            "text": serde_json::to_string_pretty(&value).unwrap_or_default()
-                        }],
-                        "structuredContent": value,
-                        "isError": false,
-                    })),
+                    Ok(value) => {
+                        // `structuredContent` must be a JSON object. A bare array
+                        // is rejected by the client ("expected record, received
+                        // array") and the content is discarded with it.
+                        let value = match value {
+                            Value::Array(rows) => {
+                                json!({ "items": rows, "count": rows.len() })
+                            }
+                            other => other,
+                        };
+                        Ok(json!({
+                            "content": [{
+                                "type": "text",
+                                "text": serde_json::to_string_pretty(&value).unwrap_or_default()
+                            }],
+                            "structuredContent": value,
+                            "isError": false,
+                        }))
+                    }
                     Err(e) => Ok(json!({
                         "content": [{ "type": "text", "text": e.to_string() }],
                         "isError": true,

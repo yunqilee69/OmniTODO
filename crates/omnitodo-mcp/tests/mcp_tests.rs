@@ -125,6 +125,154 @@ async fn write_tool_audited_when_enabled() {
     assert_eq!(row.2, "test");
 }
 
+/// Tools that naturally return a list must still hand the client an object:
+/// MCP rejects a `structuredContent` that is an array ("expected record").
+#[tokio::test]
+async fn list_tools_return_an_object_not_an_array() {
+    let (rw, _d) = ctx(true).await;
+    rw.core
+        .create_project(CreateProjectInput { name: "智搭".into(), ..Default::default() })
+        .await
+        .unwrap();
+
+    for (name, args) in [
+        ("list_projects", json!({})),
+        ("list_tags", json!({})),
+        ("list_upcoming", json!({ "days": 30 })),
+        ("list_calendar", json!({ "days": 7 })),
+        ("list_subtasks", json!({ "id": "does-not-exist" })),
+        ("list_attachments", json!({ "task_id": "does-not-exist" })),
+        ("list_due_reminders", json!({ "days": 7 })),
+    ] {
+        let resp = protocol::handle_message(
+            &rw,
+            &json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+                    "params":{"name":name,"arguments":args}}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp["result"]["isError"], false, "{name} errored: {resp}");
+        let structured = &resp["result"]["structuredContent"];
+        assert!(structured.is_object(), "{name} structuredContent must be an object, got {structured}");
+        assert!(structured.get("items").unwrap().is_array(), "{name} must wrap its rows in items");
+    }
+}
+
+/// `list_tasks` defaults to open tasks, and its own arguments select the rest:
+/// completion scope, priority, a time window, and a project by name or id.
+#[tokio::test]
+async fn list_tasks_defaults_to_open_and_filters() {
+    let (rw, _d) = ctx(true).await;
+    let project = rw
+        .core
+        .create_project(CreateProjectInput { name: "智搭".into(), ..Default::default() })
+        .await
+        .unwrap();
+    let open = rw
+        .core
+        .create_task(CreateTaskInput {
+            title: "还没做".into(),
+            project_id: Some(project.id.clone()),
+            priority: Some(Priority::High),
+            due_at: Some(1_700_000_000_000),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let done = rw
+        .core
+        .create_task(CreateTaskInput {
+            title: "做完了".into(),
+            project_id: Some(project.id.clone()),
+            priority: Some(Priority::Low),
+            due_at: Some(1_800_000_000_000),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    rw.core.complete_task(&done.id).await.unwrap();
+
+    let call = |args: Value| {
+        let rw = rw.clone();
+        async move {
+            protocol::handle_message(
+                &rw,
+                &json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+                        "params":{"name":"list_tasks","arguments":args}}),
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    // No arguments: only the task that is still open.
+    let resp = call(json!({})).await;
+    assert_eq!(resp["result"]["isError"], false, "{resp}");
+    assert_eq!(resp["result"]["structuredContent"]["total"], 1);
+    assert_eq!(resp["result"]["structuredContent"]["items"][0]["id"], open.id);
+
+    // Completed only, selected by the project name rather than its id.
+    let resp = call(json!({ "scope": "completed", "project": "智搭" })).await;
+    assert_eq!(resp["result"]["structuredContent"]["total"], 1, "{resp}");
+    assert_eq!(resp["result"]["structuredContent"]["items"][0]["id"], done.id);
+
+    // Everything in the project.
+    let resp = call(json!({ "scope": "all", "project": "智搭" })).await;
+    assert_eq!(resp["result"]["structuredContent"]["total"], 2, "{resp}");
+
+    // Priority narrows the open set down to the high one.
+    let resp = call(json!({ "priorities": ["high"] })).await;
+    assert_eq!(resp["result"]["structuredContent"]["total"], 1, "{resp}");
+    assert_eq!(resp["result"]["structuredContent"]["items"][0]["id"], open.id);
+
+    // A due window that contains only the completed task, once completed are included.
+    let resp = call(json!({
+        "scope": "all",
+        "due_after": 1_750_000_000_000i64,
+        "due_before": 1_850_000_000_000i64
+    }))
+    .await;
+    assert_eq!(resp["result"]["structuredContent"]["total"], 1, "{resp}");
+    assert_eq!(resp["result"]["structuredContent"]["items"][0]["id"], done.id);
+
+    // The same arguments drive search and export, which previously dropped them.
+    let resp = call_tool(&rw, "search_tasks", json!({ "query": "做完", "scope": "completed" })).await;
+    assert_eq!(resp["result"]["structuredContent"]["total"], 1, "{resp}");
+    let resp = call_tool(&rw, "export_tasks", json!({ "scope": "completed", "project": "智搭" })).await;
+    let data = resp["result"]["structuredContent"]["data"].as_str().unwrap();
+    assert!(data.contains("做完了"), "export missed the completed task: {data}");
+    assert!(!data.contains("还没做"), "export included an open task: {data}");
+}
+
+/// `get_project` is what a caller reaches for after `summary_report` names a
+/// project, so the name has to work as well as the id.
+#[tokio::test]
+async fn get_project_accepts_a_name() {
+    let (rw, _d) = ctx(true).await;
+    let project = rw
+        .core
+        .create_project(CreateProjectInput { name: "智搭".into(), ..Default::default() })
+        .await
+        .unwrap();
+
+    let resp = call_tool(&rw, "get_project", json!({ "id": "智搭" })).await;
+    assert_eq!(resp["result"]["isError"], false, "{resp}");
+    assert_eq!(resp["result"]["structuredContent"]["id"], project.id);
+
+    let resp = call_tool(&rw, "get_project", json!({ "id": "没有这个项目" })).await;
+    assert_eq!(resp["result"]["isError"], true, "{resp}");
+}
+
+async fn call_tool(ctx: &ToolContext, name: &str, args: Value) -> Value {
+    protocol::handle_message(
+        ctx,
+        &json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+                "params":{"name":name,"arguments":args}}),
+    )
+    .await
+    .unwrap()
+}
+
 #[tokio::test]
 async fn unknown_method_returns_jsonrpc_error() {
     let (ro, _d) = ctx(false).await;

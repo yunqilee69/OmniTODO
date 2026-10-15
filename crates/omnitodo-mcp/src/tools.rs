@@ -79,51 +79,59 @@ fn spec(name: &str, write: bool) -> Value {
 fn describe(name: &str) -> (&'static str, Value) {
     let empty = json!({ "type": "object", "properties": {} });
     match name {
-        "list_projects" => ("List projects with open/completed/overdue counts", empty),
+        "list_projects" => (
+            "List projects with open/completed/overdue counts. Returns {items}",
+            empty,
+        ),
         "get_project" => (
-            "Get one project with stats",
-            json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}),
+            "Get one project with stats. `id` may be the project id or its name",
+            json!({"type":"object","properties":{"id":{"type":"string","description":"Project id, or its name"}},"required":["id"]}),
         ),
         "list_tasks" => (
-            "List tasks by filter, paginated",
-            json!({"type":"object","properties":{"filter":{"type":"object"},"limit":{"type":"integer"},"offset":{"type":"integer"}}}),
+            "List tasks, paginated. Defaults to open tasks (todo and in_progress); pass scope to include completed or everything. Returns {items,total,limit,offset}",
+            task_query_schema(false),
         ),
         "get_task" => (
             "Get one task with tags and attachment metadata",
             json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}),
         ),
         "list_subtasks" => (
-            "List all (recursive) subtasks of a task",
+            "List all (recursive) subtasks of a task. Returns {items}",
             json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}),
         ),
-        "list_tags" => ("List tags with usage counts", empty),
+        "list_tags" => ("List tags with usage counts. Returns {items}", empty),
         "search_tasks" => (
-            "Full-text search with optional filter",
-            json!({"type":"object","properties":{"query":{"type":"string"},"filter":{"type":"object"},"limit":{"type":"integer"}},"required":["query"]}),
+            "Full-text search. Same filters as list_tasks, and the same default of open tasks only. Queries shorter than 3 characters use substring match. Returns {items,total,limit,offset}",
+            task_query_schema(true),
         ),
         "list_upcoming" => (
-            "Tasks due within the next N days (default 7)",
+            "Open tasks due within the next N days (default 7). Returns {items}",
             json!({"type":"object","properties":{"days":{"type":"integer"}}}),
         ),
         "list_due_reminders" => (
-            "Planned reminder times for the next N days",
+            "Planned reminder times for the next N days. Returns {items}",
             json!({"type":"object","properties":{"days":{"type":"integer"}}}),
         ),
         "list_attachments" => (
-            "Attachment metadata for a task (never returns the binary)",
+            "Attachment metadata for a task (never returns the binary). Returns {items}",
             json!({"type":"object","properties":{"task_id":{"type":"string"}},"required":["task_id"]}),
         ),
         "summary_report" => (
-            "Aggregated report (the core read tool)",
-            json!({"type":"object","properties":{"days":{"type":"integer"},"from":{"type":"integer"},"to":{"type":"integer"}}}),
+            "Aggregated report. completed/by_* count live tasks and ignore the window; completed_in_window and throughput count completions of live tasks inside from/to (days selects the window when from is omitted, default 30)",
+            json!({"type":"object","properties":{"days":{"type":"integer"},"from":{"type":"integer","description":"Window start, unix ms"},"to":{"type":"integer","description":"Window end, unix ms"}}}),
         ),
         "list_calendar" => (
-            "Calendar items (materialised tasks + virtual occurrences) in a window",
+            "Calendar items (materialised tasks + virtual occurrences) in a window. Returns {items}",
             json!({"type":"object","properties":{"from":{"type":"integer"},"to":{"type":"integer"},"days":{"type":"integer"}}}),
         ),
         "export_tasks" => (
-            "Serialize tasks (json|csv|markdown) without writing to disk",
-            json!({"type":"object","properties":{"format":{"type":"string"},"filter":{"type":"object"}}}),
+            "Serialize tasks (json|csv|markdown) without writing to disk. Same filters and default (open tasks only) as list_tasks. Returns {format,data}",
+            {
+                let mut schema = task_query_schema(false);
+                schema["properties"]["format"] =
+                    json!({"type":"string","enum":["json","csv","markdown"],"description":"Defaults to json"});
+                schema
+            }
         ),
         "create_task" => (
             "Create a task using exact fields",
@@ -155,6 +163,54 @@ fn describe(name: &str) -> (&'static str, Value) {
         ),
         _ => ("Unknown tool", json!({ "type": "object", "properties": {} })),
     }
+}
+
+/// Arguments shared by `list_tasks`, `search_tasks` and `export_tasks`.
+///
+/// Flat on purpose: a caller passes `scope` and `project` directly instead of
+/// nesting them under `filter`, whose field names (`statuses`, `project_ids`)
+/// are easy to guess wrong. A nested `filter` is still accepted.
+fn task_query_schema(search: bool) -> Value {
+    let mut properties = serde_json::Map::new();
+    if search {
+        properties.insert("query".into(), json!({"type":"string"}));
+    }
+    properties.insert(
+        "scope".into(),
+        json!({"type":"string","enum":["open","completed","all"],"description":"Which tasks by completion. open (default) is todo and in_progress; completed is done; all is everything including cancelled"}),
+    );
+    properties.insert(
+        "project".into(),
+        json!({"type":"string","description":"Project id or name. Name match is case-insensitive; a substring is accepted only when exactly one project matches"}),
+    );
+    properties.insert(
+        "priorities".into(),
+        json!({"type":"array","items":{"type":"string","enum":["none","low","medium","high","urgent"]}}),
+    );
+    properties.insert(
+        "statuses".into(),
+        json!({"type":"array","items":{"type":"string","enum":["todo","in_progress","done","cancelled"]},"description":"Exact statuses. Overrides scope"}),
+    );
+    for (field, desc) in [
+        ("due_before", "Due at or before, unix ms"),
+        ("due_after", "Due at or after, unix ms"),
+        ("start_before", "Starts at or before, unix ms"),
+        ("start_after", "Starts at or after, unix ms"),
+        ("completed_before", "Completed at or before, unix ms"),
+        ("completed_after", "Completed at or after, unix ms"),
+    ] {
+        properties.insert(field.into(), json!({"type":"integer","description":desc}));
+    }
+    properties.insert("limit".into(), json!({"type":"integer"}));
+    properties.insert("offset".into(), json!({"type":"integer"}));
+    properties.insert(
+        "filter".into(),
+        json!({"type":"object","description":"Advanced filter (project_ids, tag_ids, priorities, statuses, include_completed, …). Explicit arguments above override it"}),
+    );
+    if search {
+        return json!({"type":"object","properties":properties,"required":["query"]});
+    }
+    json!({"type":"object","properties":properties})
 }
 
 fn parse<T: DeserializeOwned>(v: &Value) -> Result<T> {
@@ -193,29 +249,19 @@ pub async fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Result<Va
 async fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value> {
     let core = &ctx.core;
     match name {
-        "list_projects" => to_value(&core.list_projects(false).await?),
+        "list_projects" => items(&core.list_projects(false).await?),
         "get_project" => {
             #[derive(serde::Deserialize)]
             struct A {
                 id: String,
             }
             let a: A = parse(args)?;
-            to_value(&core.get_project(&a.id).await?)
+            let id = core.resolve_project_id(&a.id).await?;
+            to_value(&core.get_project(&id).await?)
         }
         "list_tasks" => {
-            #[derive(serde::Deserialize)]
-            struct A {
-                #[serde(default)]
-                filter: TaskFilter,
-                #[serde(default)]
-                limit: Option<i64>,
-                #[serde(default)]
-                offset: Option<i64>,
-            }
-            let mut a: A = parse(args)?;
-            a.filter.limit = a.limit.or(a.filter.limit);
-            a.filter.offset = a.offset.or(a.filter.offset);
-            to_value(&core.list_tasks(&a.filter).await?)
+            let filter = task_filter_from_args(core, args).await?;
+            to_value(&core.list_tasks(&filter).await?)
         }
         "get_task" => {
             #[derive(serde::Deserialize)]
@@ -231,22 +277,17 @@ async fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value> 
                 id: String,
             }
             let a: A = parse(args)?;
-            to_value(&core.list_subtasks(&a.id).await?)
+            items(&core.list_subtasks(&a.id).await?)
         }
-        "list_tags" => to_value(&core.list_tags().await?),
+        "list_tags" => items(&core.list_tags().await?),
         "search_tasks" => {
-            #[derive(serde::Deserialize)]
-            struct A {
-                query: String,
-                #[serde(default)]
-                filter: TaskFilter,
-                #[serde(default)]
-                limit: Option<i64>,
-            }
-            let a: A = parse(args)?;
-            let mut f = a.filter;
-            f.limit = a.limit.or(f.limit);
-            to_value(&core.search(&a.query, &f).await?)
+            let query = args
+                .get("query")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| CoreError::Validation("search_tasks requires query".into()))?
+                .to_string();
+            let filter = task_filter_from_args(core, args).await?;
+            to_value(&core.search(&query, &filter).await?)
         }
         "list_upcoming" => {
             #[derive(serde::Deserialize)]
@@ -267,7 +308,7 @@ async fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value> 
                     ..Default::default()
                 })
                 .await?;
-            to_value(&page.items)
+            items(&page.items)
         }
         "list_due_reminders" => {
             #[derive(serde::Deserialize)]
@@ -280,7 +321,7 @@ async fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value> 
             let hits = core
                 .reminders_catch_up(now, now + a.days.unwrap_or(7) * 86_400_000)
                 .await?;
-            to_value(&hits)
+            items(&hits)
         }
         "list_attachments" => {
             #[derive(serde::Deserialize)]
@@ -288,7 +329,7 @@ async fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value> 
                 task_id: String,
             }
             let a: A = parse(args)?;
-            to_value(&core.list_attachments(&a.task_id).await?)
+            items(&core.list_attachments(&a.task_id).await?)
         }
         "summary_report" => {
             #[derive(serde::Deserialize)]
@@ -320,27 +361,17 @@ async fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value> 
             let now = now_ms();
             let from = a.from.unwrap_or(now);
             let to = a.to.unwrap_or(from + a.days.unwrap_or(30) * 86_400_000);
-            to_value(&core.calendar(from, to).await?)
+            items(&core.calendar(from, to).await?)
         }
         "export_tasks" => {
-            #[derive(serde::Deserialize)]
-            struct A {
-                #[serde(default)]
-                format: Option<String>,
-                #[serde(default)]
-                filter: TaskFilter,
+            let mut filter = task_filter_from_args(core, args).await?;
+            if filter.limit.is_none() {
+                filter.limit = Some(500);
             }
-            let mut a: A = parse(args)?;
-            if a.filter.limit.is_none() {
-                a.filter.limit = Some(500);
-            }
-            let fmt = a
-                .format
-                .as_deref()
-                .and_then(ExportFormat::parse)
-                .unwrap_or(ExportFormat::Json);
-            let text = core.export_tasks(&a.filter, fmt).await?;
-            Ok(json!({ "format": a.format.unwrap_or_else(|| "json".into()), "data": text }))
+            let format = args.get("format").and_then(|v| v.as_str());
+            let fmt = format.and_then(ExportFormat::parse).unwrap_or(ExportFormat::Json);
+            let text = core.export_tasks(&filter, fmt).await?;
+            Ok(json!({ "format": format.unwrap_or("json"), "data": text }))
         }
         "create_task" => {
             let input: CreateTaskInput = parse(args)?;
@@ -434,4 +465,121 @@ async fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value> 
 
 fn to_value<T: serde::Serialize>(v: &T) -> Result<Value> {
     serde_json::to_value(v).map_err(|e| CoreError::Validation(e.to_string()))
+}
+
+/// Wrap a list in an object. MCP requires `structuredContent` to be a record,
+/// so a bare array makes the client reject the whole result.
+fn items<T: serde::Serialize>(rows: &[T]) -> Result<Value> {
+    let rows = to_value(&rows)?;
+    let count = rows.as_array().map(|a| a.len()).unwrap_or(0);
+    Ok(json!({ "items": rows, "count": count }))
+}
+
+/// Build a `TaskFilter` from the flat tool arguments, mapping `scope` and a
+/// project name onto the core filter. Unknown enum values are an error rather
+/// than a silently dropped argument.
+async fn task_filter_from_args(core: &Core, args: &Value) -> Result<TaskFilter> {
+    #[derive(serde::Deserialize, Default)]
+    struct A {
+        #[serde(default)]
+        filter: Option<TaskFilter>,
+        #[serde(default)]
+        scope: Option<String>,
+        #[serde(default)]
+        statuses: Option<Vec<String>>,
+        #[serde(default)]
+        priorities: Option<Vec<String>>,
+        #[serde(default)]
+        project: Option<String>,
+        #[serde(default)]
+        project_ids: Option<Vec<String>>,
+        #[serde(default)]
+        due_after: Option<i64>,
+        #[serde(default)]
+        due_before: Option<i64>,
+        #[serde(default)]
+        start_after: Option<i64>,
+        #[serde(default)]
+        start_before: Option<i64>,
+        #[serde(default)]
+        completed_after: Option<i64>,
+        #[serde(default)]
+        completed_before: Option<i64>,
+        #[serde(default)]
+        include_completed: Option<bool>,
+        #[serde(default)]
+        limit: Option<i64>,
+        #[serde(default)]
+        offset: Option<i64>,
+    }
+    let a: A = parse(args)?;
+    let mut f = a.filter.unwrap_or_default();
+
+    if let Some(scope) = a.scope.as_deref() {
+        match scope.trim().to_ascii_lowercase().as_str() {
+            "open" | "unfinished" | "incomplete" => {
+                f.statuses = None;
+                f.include_completed = false;
+            }
+            "completed" | "done" => {
+                f.statuses = Some(vec![Status::Done]);
+                f.include_completed = true;
+            }
+            "all" | "everything" => {
+                f.statuses = None;
+                f.include_completed = true;
+            }
+            other => {
+                return Err(CoreError::Validation(format!(
+                    "scope must be open, completed or all, got {other:?}"
+                )))
+            }
+        }
+    }
+    if let Some(raw) = &a.statuses {
+        let mut out = Vec::with_capacity(raw.len());
+        for s in raw {
+            out.push(Status::parse(s).ok_or_else(|| {
+                CoreError::Validation(format!(
+                    "unknown status {s:?}; expected todo, in_progress, done or cancelled"
+                ))
+            })?);
+        }
+        f.statuses = Some(out);
+        f.include_completed = true; // an explicit status list is authoritative
+    }
+    if let Some(raw) = &a.priorities {
+        let mut out = Vec::with_capacity(raw.len());
+        for p in raw {
+            out.push(Priority::parse(p).ok_or_else(|| {
+                CoreError::Validation(format!(
+                    "unknown priority {p:?}; expected none, low, medium, high or urgent"
+                ))
+            })?);
+        }
+        f.priorities = Some(out);
+    }
+    if let Some(ids) = a.project_ids {
+        if !ids.is_empty() {
+            f.project_ids = Some(ids);
+        }
+    }
+    if let Some(name) = a.project.as_deref() {
+        let id = core.resolve_project_id(name).await?;
+        let mut ids = f.project_ids.take().unwrap_or_default();
+        ids.push(id);
+        f.project_ids = Some(ids);
+    }
+    if let Some(v) = a.include_completed {
+        f.include_completed = v;
+    }
+    f.due_after = a.due_after.or(f.due_after);
+    f.due_before = a.due_before.or(f.due_before);
+    f.start_after = a.start_after.or(f.start_after);
+    f.start_before = a.start_before.or(f.start_before);
+    f.completed_after = a.completed_after.or(f.completed_after);
+    f.completed_before = a.completed_before.or(f.completed_before);
+    f.limit = a.limit.or(f.limit);
+    f.offset = a.offset.or(f.offset);
+    Ok(f)
 }

@@ -332,6 +332,41 @@ const findTask = (id: string) => tasks.find((t) => t.id === id);
 
 /** Handlers keyed by Tauri command; anything unhandled resolves to null. */
 function buildHandlers(): Record<string, (args: Record<string, unknown>) => unknown> {
+  // MCP panel state. Mutable so the token controls, the HTTP switch and the
+  // write switch can actually be exercised in the preview rather than only
+  // rendered once in their initial state.
+  const mockMcp = {
+    write: false,
+    http: false,
+    controlToken: "01a13d2b4c6b73d59d4d1d5df84e0c7d01a13d2b4c6b73d59d4d1d5eec1f922a",
+    httpToken: "01a13d5190387057af79b84822083c8301a13d5190387057af79b84b785cb914",
+  };
+  const MOCK_BIN = "C:\\Program Files\\OmniTODO\\omnitodo-mcp.exe";
+  const setMockToken = (kind: string, token: string) => {
+    if (kind === "control") mockMcp.controlToken = token;
+    else mockMcp.httpToken = token;
+  };
+  // Mirrors what `omnitodo-desktop/src/mcp_config.rs` produces, so the panel's
+  // layout is reviewed against realistic long paths and a real 64-char token.
+  const mockArgs = () => [
+    "--db",
+    "C:\\Users\\dev\\.omnitodo\\omnitodo.db",
+    "--notify",
+    "http://127.0.0.1:8788/internal/notify",
+    "--notify-token",
+    mockMcp.controlToken,
+    ...(mockMcp.write ? ["--write"] : []),
+  ];
+  const mockZcodeConfig = () =>
+    JSON.stringify(
+      { mcp: { servers: { OmniTODO: { type: "stdio", command: MOCK_BIN, args: mockArgs() } } } },
+      null,
+      2,
+    );
+  const mockGenericConfig = () =>
+    JSON.stringify({ mcpServers: { omnitodo: { command: MOCK_BIN, args: mockArgs() } } }, null, 2);
+  const mockArgsLine = () => [MOCK_BIN, ...mockArgs()].join(" ");
+
   return {
     // ---- events (registerEventBridge / App.tsx listeners) ----
     "plugin:event|listen": () => 1,
@@ -500,6 +535,7 @@ function buildHandlers(): Record<string, (args: Record<string, unknown>) => unkn
     // ---- settings ----
     settings_get: ({ key }) => settings.get(String(key)) ?? null,
     settings_set: ({ key, value }) => {
+      if (key === "mcp.write_enabled") mockMcp.write = value === true;
       settings.set(String(key), value);
       return null;
     },
@@ -515,6 +551,7 @@ function buildHandlers(): Record<string, (args: Record<string, unknown>) => unkn
       total: 0,
       open: 0,
       completed: 0,
+      completed_in_window: 0,
       overdue: 0,
       due_soon: 0,
       by_project: [],
@@ -525,11 +562,44 @@ function buildHandlers(): Record<string, (args: Record<string, unknown>) => unkn
       on_time_rate: null,
     }),
     mcp_status: () => ({
-      stdio: { bin_path: "/dev/omnitodo-mcp", always_available: true },
-      http: { running: false, port: 0, token: "" },
-      control: { port: 0, token: "" },
-      write_enabled: false,
+      version: "0.1.0-dev-preview",
+      stdio: {
+        bin_path: "C:\\Program Files\\OmniTODO\\omnitodo-mcp.exe",
+        exists: true,
+        always_available: true,
+      },
+      http: { running: mockMcp.http, port: mockMcp.http ? 8787 : 0, token: mockMcp.httpToken },
+      control: {
+        port: 8788,
+        token: mockMcp.controlToken,
+        state: "listening" as const,
+        error: null,
+      },
+      write_enabled: mockMcp.write,
+      db_path: "C:\\Users\\dev\\.omnitodo\\omnitodo.db",
+      data_dir: "C:\\Users\\dev\\.omnitodo",
     }),
+    mcp_copy_client_config: () => mockGenericConfig(),
+    mcp_zcode_config: () => mockZcodeConfig(),
+    mcp_args_line: () => mockArgsLine(),
+    mcp_set_token: ({ kind, token }) => {
+      setMockToken(String(kind), String(token));
+      return null;
+    },
+    mcp_regenerate_token: ({ kind }) => {
+      const next = `${Date.now().toString(16).padStart(24, "0")}${"a".repeat(40)}`;
+      setMockToken(String(kind), next);
+      return next;
+    },
+    mcp_http_start: () => {
+      mockMcp.http = true;
+      return null;
+    },
+    mcp_http_stop: () => {
+      mockMcp.http = false;
+      return null;
+    },
+    control_config: () => ({ port: 8788, token: mockMcp.controlToken }),
     app_version: () => "0.1.0-dev-preview",
     app_releases_url: () => "https://github.com/",
     quickadd_parse: ({ text }) => ({

@@ -749,6 +749,12 @@ fn push_task_filter(qb: &mut QueryBuilder<Sqlite>, f: &TaskFilter) {
     if let Some(v) = f.start_after {
         qb.push(" AND start_at IS NOT NULL AND start_at >= ").push_bind(v);
     }
+    if let Some(v) = f.completed_after {
+        qb.push(" AND completed_at IS NOT NULL AND completed_at >= ").push_bind(v);
+    }
+    if let Some(v) = f.completed_before {
+        qb.push(" AND completed_at IS NOT NULL AND completed_at <= ").push_bind(v);
+    }
     match f.has_attachments {
         Some(true) => {
             qb.push(" AND EXISTS (SELECT 1 FROM attachments a WHERE a.task_id = tasks.id AND a.deleted_at IS NULL)");

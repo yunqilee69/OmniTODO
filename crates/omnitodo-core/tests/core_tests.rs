@@ -11,6 +11,7 @@ use omnitodo_core::service::importexport::{
 use chrono::Timelike;
 use omnitodo_core::service::quickadd::{parse_when, QuickAddParser};
 use omnitodo_core::service::recurrence::RecurrenceRule;
+use omnitodo_core::service::endpoint;
 use omnitodo_core::service::{report, Core};
 
 const DAY: i64 = 86_400_000;
@@ -878,6 +879,42 @@ async fn report_summary_buckets() {
     assert_eq!(s.throughput.len(), 1);
 }
 
+/// `completed` is a snapshot of the live task set; the throughput window is a
+/// separate dataset. Both must be reported, and a soft-deleted task must not
+/// keep inflating the window.
+#[tokio::test]
+async fn report_summary_separates_snapshot_from_window() {
+    let (core, _d) = core().await;
+    let kept = core
+        .create_task(CreateTaskInput { title: "kept".into(), ..Default::default() })
+        .await
+        .unwrap();
+    let removed = core
+        .create_task(CreateTaskInput { title: "removed".into(), ..Default::default() })
+        .await
+        .unwrap();
+    core.complete_task(&kept.id).await.unwrap();
+    core.complete_task(&removed.id).await.unwrap();
+    core.delete_task(&removed.id).await.unwrap();
+
+    let now = now_ms();
+    let s = report::summary(&core, now - DAY, now + DAY, None, true).await.unwrap();
+
+    assert_eq!(s.completed, 1, "only the live done task is a snapshot completion");
+    assert_eq!(s.completed_in_window, 1);
+    let summed: i64 = s.throughput.iter().map(|(_, n)| n).sum();
+    assert_eq!(
+        summed, s.completed_in_window,
+        "throughput is a breakdown of completed_in_window"
+    );
+
+    // Widening the window past the completion leaves the snapshot alone.
+    let outside = report::summary(&core, now + DAY, now + 2 * DAY, None, true).await.unwrap();
+    assert_eq!(outside.completed, 1, "snapshot ignores the window");
+    assert_eq!(outside.completed_in_window, 0);
+    assert!(outside.throughput.is_empty());
+}
+
 #[tokio::test]
 async fn import_export_roundtrip() {
     let (core, _d) = core().await;
@@ -1148,3 +1185,104 @@ async fn inbox_filter_excludes_filed_tasks() {
     let all = core.list_tasks(&TaskFilter::default()).await.unwrap();
     assert_eq!(all.total, 2);
 }
+
+// ---------------------------------------------------------------------------
+// Loopback endpoint tokens (design §4.4/§4.5, amended 2026-10-15)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn endpoint_token_is_generated_once_and_then_stable() {
+    // A real file, unlike `open_in_memory`: "persisted" has to mean the value
+    // survives the process, so the test needs a database that outlives it.
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("omnitodo.db");
+
+    let core = Core::open(&db, false).await.unwrap();
+    let first = core.endpoint_token(endpoint::CONTROL_TOKEN_KEY).await.unwrap();
+    assert!(endpoint::validate_token(&first).is_ok());
+
+    // Repeated reads must not rotate it — a client config pasted from the
+    // settings page has to keep working.
+    let second = core.endpoint_token(endpoint::CONTROL_TOKEN_KEY).await.unwrap();
+    assert_eq!(first, second);
+    drop(core);
+
+    // And it is still the same after a restart.
+    let reopened = Core::open(&db, false).await.unwrap();
+    let third = reopened.endpoint_token(endpoint::CONTROL_TOKEN_KEY).await.unwrap();
+    assert_eq!(first, third);
+}
+
+#[tokio::test]
+async fn endpoint_token_keys_are_independent() {
+    let (core, _d) = core().await;
+    let control = core.endpoint_token(endpoint::CONTROL_TOKEN_KEY).await.unwrap();
+    let http = core.endpoint_token(endpoint::HTTP_TOKEN_KEY).await.unwrap();
+    assert_ne!(control, http);
+}
+
+#[tokio::test]
+async fn set_endpoint_token_validates_and_persists() {
+    let (core, _d) = core().await;
+    core.endpoint_token(endpoint::CONTROL_TOKEN_KEY).await.unwrap();
+
+    let mine = "my-own-token_0123456789";
+    core.set_endpoint_token(endpoint::CONTROL_TOKEN_KEY, mine).await.unwrap();
+    assert_eq!(
+        core.endpoint_token(endpoint::CONTROL_TOKEN_KEY).await.unwrap(),
+        mine
+    );
+
+    // A value that cannot travel in an Authorization header must be refused
+    // rather than stored and silently failing every callback.
+    for bad in ["", "short", &"x".repeat(129)] {
+        assert!(core.set_endpoint_token(endpoint::CONTROL_TOKEN_KEY, bad).await.is_err());
+    }
+    for bad in [
+        "\"quoted-token-0123456789\"",
+        "has space 0123456789",
+        "unicode-token-中文-0123456789",
+    ] {
+        let err = core
+            .set_endpoint_token(endpoint::CONTROL_TOKEN_KEY, bad)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "VALIDATION");
+    }
+
+    // The rejected writes left the previous value alone.
+    assert_eq!(
+        core.endpoint_token(endpoint::CONTROL_TOKEN_KEY).await.unwrap(),
+        mine
+    );
+}
+
+#[tokio::test]
+async fn regenerate_endpoint_token_replaces_the_value() {
+    let (core, _d) = core().await;
+    let before = core.endpoint_token(endpoint::HTTP_TOKEN_KEY).await.unwrap();
+    let after = core.regenerate_endpoint_token(endpoint::HTTP_TOKEN_KEY).await.unwrap();
+    assert_ne!(before, after);
+    assert!(endpoint::validate_token(&after).is_ok());
+    assert_eq!(
+        core.endpoint_token(endpoint::HTTP_TOKEN_KEY).await.unwrap(),
+        after
+    );
+}
+
+#[tokio::test]
+async fn unusable_stored_token_is_replaced_on_read() {
+    let (core, _d) = core().await;
+    // A value stored by an older build, or edited by hand in the DB.
+    core.setting_set(
+        endpoint::CONTROL_TOKEN_KEY,
+        &serde_json::json!("nope"),
+    )
+    .await
+    .unwrap();
+
+    let repaired = core.endpoint_token(endpoint::CONTROL_TOKEN_KEY).await.unwrap();
+    assert_ne!(repaired, "nope");
+    assert!(endpoint::validate_token(&repaired).is_ok());
+}
+
