@@ -17,7 +17,6 @@ import { ROW_INDENT_STEP } from "./layout";
 export const BEFORE_BAND = 0.28;
 
 export type DropIntent = "before" | "after" | "child";
-
 export interface DropTarget {
   /** The row the pointer is over. */
   overId: string;
@@ -27,23 +26,26 @@ export interface DropTarget {
 /**
  * Resolve a pointer position against one hovered row.
  *
- * `offsetX` is measured from the same edge the row's padding is: 0 is the
- * row's left edge, so comparing it with `rowIndent` (the row's own left
- * padding) is what tells "level with this row" from "one step in".
+ * `offsetY` is the pointer's position inside the hovered row (0 = its top
+ * edge), and `dragDx` is how far the pointer has travelled *rightwards* since
+ * the drag began.
  *
- * Anything short of a full extra indent step stays a sibling — a small wobble
- * must not reparent a task. The child slot is the bottom band only, because
- * the top band is unambiguously "before", and a child always lands first
- * under its new parent rather than between that parent's existing children.
+ * The child slot is measured from the drag's own movement rather than from
+ * where the pointer sits inside the row: a row is ~500px wide and its handle,
+ * checkbox and title all sit well past any fixed offset, so an absolute
+ * threshold would read as "child" for nearly every drop and plain reordering
+ * would never happen. Pushing the task one indent step to the right is the
+ * gesture, and it means the same thing on every row whatever the row's width,
+ * its depth, or which column the drag started from.
+ *
+ * Anything short of a full indent step stays a sibling — a small wobble must
+ * not reparent a task. The child slot is the bottom band only, because the top
+ * band is unambiguously "before", and a child always lands first under its new
+ * parent rather than between that parent's existing children.
  */
-export function resolveDropIntent(
-  offsetY: number,
-  height: number,
-  offsetX: number,
-  rowIndent: number,
-): DropIntent {
+export function resolveDropIntent(offsetY: number, height: number, dragDx: number): DropIntent {
   if (height <= 0 || offsetY < height * BEFORE_BAND) return "before";
-  if (offsetX >= rowIndent + ROW_INDENT_STEP) return "child";
+  if (dragDx >= ROW_INDENT_STEP) return "child";
   return "after";
 }
 

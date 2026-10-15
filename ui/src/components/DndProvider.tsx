@@ -25,7 +25,7 @@ import { Card } from "antd";
 import { useState, type ReactNode } from "react";
 import { api, type Page, type TaskDto } from "../api/client";
 import { qk } from "../api/queryKeys";
-import { ROW_INDENT_STEP, rowPaddingLeft, rowRuleInset } from "../lib/layout";
+import { ROW_INDENT_STEP, rowRuleInset } from "../lib/layout";
 import { resolveDropIntent, nestMove, type DropIntent, type DropTarget } from "../lib/nestDrop";
 import { reorderSubsequence } from "../lib/reorder";
 
@@ -97,24 +97,15 @@ interface DropLine {
 }
 
 /**
- * Pointer position inside the hovered row, from the translated rect dnd-kit
- * reports. `activatorEvent` is where the drag *started*, so the live position
- * is that plus `delta`.
+ * Pointer's vertical position inside the hovered row, from the translated rect
+ * dnd-kit reports. `activatorEvent` is where the drag *started*, so the live
+ * position is that plus `delta`.
  */
-function pointerInRow(event: DragMoveEvent | DragEndEvent): { x: number; y: number } | null {
+function pointerInRow(event: DragMoveEvent | DragEndEvent): number | null {
   const over = event.over?.rect;
   const start = event.activatorEvent;
   if (!over || !(start instanceof MouseEvent)) return null;
-  return {
-    x: start.clientX + event.delta.x - over.left,
-    y: start.clientY + event.delta.y - over.top,
-  };
-}
-
-/** The hovered row's own left padding, stashed on it by `SortableTaskRow`. */
-function rowIndent(event: DragMoveEvent | DragEndEvent): number {
-  const indent = event.over?.data.current?.indent;
-  return typeof indent === "number" ? indent : rowPaddingLeft(0);
+  return start.clientY + event.delta.y - over.top;
 }
 
 export function TaskDndProvider({ children }: { children: ReactNode }) {
@@ -147,19 +138,18 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
       setDropLine(null);
       return;
     }
-    const pointer = pointerInRow(event);
+    const pointerY = pointerInRow(event);
     const rect = event.over?.rect;
-    if (!pointer || !rect) return;
-    const indent = rowIndent(event);
-    const intent = resolveDropIntent(pointer.y, rect.height, pointer.x, indent);
+    if (pointerY === null || !rect) return;
+    const intent = resolveDropIntent(pointerY, rect.height, event.delta.x);
     setDropTarget({ overId, intent });
     // A child slot's line starts one indent step in from the row's own rule,
     // which is the same place the new child's title will sit.
     const inset = intent === "child" ? ROW_INDENT_STEP : 0;
     setDropLine({
       top: rect.top + (intent === "before" ? 0 : rect.height),
-      left: rect.left + rowRuleInset(0) - rowPaddingLeft(0) + indent + inset,
-      width: Math.max(0, rect.width - (rowRuleInset(0) - rowPaddingLeft(0)) - indent - inset),
+      left: rect.left + rowRuleInset(0) + inset,
+      width: Math.max(0, rect.right - (rect.left + rowRuleInset(0) + inset)),
       child: intent === "child",
     });
   };
@@ -170,10 +160,10 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
     const activeId = String(event.active.id);
     const overId = event.over ? String(event.over.id) : null;
     // Recompute at release: the last move may have landed between events.
-    const pointer = pointerInRow(event);
+    const pointerY = pointerInRow(event);
     const rect = event.over?.rect;
     const intent: DropIntent =
-      pointer && rect ? resolveDropIntent(pointer.y, rect.height, pointer.x, rowIndent(event)) : (dropTarget?.intent ?? "after");
+      pointerY !== null && rect ? resolveDropIntent(pointerY, rect.height, event.delta.x) : (dropTarget?.intent ?? "after");
     clearDrag();
     if (!overId || overId === activeId) return;
 
