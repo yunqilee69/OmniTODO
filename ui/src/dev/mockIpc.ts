@@ -264,6 +264,7 @@ function applyPatch(task: TaskDto, patch: Record<string, unknown>): void {
   const row = task as unknown as Record<string, unknown>;
   const clears: [string, string][] = [
     ["clear_project_id", "project_id"],
+    ["clear_parent_id", "parent_id"],
     ["clear_start_at", "start_at"],
     ["clear_due_at", "due_at"],
     ["clear_remind_at", "remind_at"],
@@ -367,6 +368,38 @@ function buildHandlers(): Record<string, (args: Record<string, unknown>) => unkn
     JSON.stringify({ mcpServers: { omnitodo: { command: MOCK_BIN, args: mockArgs() } } }, null, 2);
   const mockArgsLine = () => [MOCK_BIN, ...mockArgs()].join(" ");
 
+  /** One new task from a create input. `task_create` and `task_add_subtask`
+   *  share it — the two differ only in which parent and project they carry.
+   *  New siblings land after the last one, like the core's `sort_order`. */
+  const makeFromInput = (input: unknown) => {
+    const raw = (input ?? {}) as Record<string, unknown>;
+    const projectId = (raw.project_id as string | null) ?? null;
+    const parentId = (raw.parent_id as string | null) ?? null;
+    const siblings = tasks.filter((t) => t.project_id === projectId && t.parent_id === parentId);
+    const task = makeTask({
+      id: newId("dev"),
+      title: String(raw.title ?? "未命名任务"),
+      description: (raw.description as string | null) ?? null,
+      project_id: projectId,
+      parent_id: parentId,
+      priority: (raw.priority as Priority) ?? "none",
+      status: (raw.status as TaskDto["status"]) ?? "todo",
+      due_at: (raw.due_at as number | null) ?? null,
+      start_at: (raw.start_at as number | null) ?? null,
+      all_day: Boolean(raw.all_day),
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      sort_order: raw.sort_order != null ? Number(raw.sort_order) : siblings.length,
+    });
+    if (Array.isArray(raw.tag_names)) {
+      task.tags = raw.tag_names as string[];
+      task.tag_ids = task.tags.map((n) => tags.find((t) => t.name === n)?.id ?? n);
+    }
+    tasks = [...tasks, task];
+    rollUp();
+    return task;
+  };
+
   return {
     // ---- events (registerEventBridge / App.tsx listeners) ----
     "plugin:event|listen": () => 1,
@@ -412,32 +445,15 @@ function buildHandlers(): Record<string, (args: Record<string, unknown>) => unkn
       rollUp();
       return task;
     },
-    task_create: ({ input }) => {
+    task_create: ({ input }) => makeFromInput(input),
+
+    // Mirrors the core: the child files under its parent and inherits the
+    // parent's project when the input names none.
+    task_add_subtask: ({ parentId, input }) => {
+      const parent = findTask(String(parentId));
+      if (!parent) throw new Error(`task ${parentId} not found`);
       const raw = (input ?? {}) as Record<string, unknown>;
-      const projectId = (raw.project_id as string | null) ?? null;
-      const siblings = tasks.filter((t) => t.project_id === projectId && !t.parent_id);
-      const task = makeTask({
-        id: newId("dev"),
-        title: String(raw.title ?? "未命名任务"),
-        description: (raw.description as string | null) ?? null,
-        project_id: projectId,
-        parent_id: (raw.parent_id as string | null) ?? null,
-        priority: (raw.priority as Priority) ?? "none",
-        status: (raw.status as TaskDto["status"]) ?? "todo",
-        due_at: (raw.due_at as number | null) ?? null,
-        start_at: (raw.start_at as number | null) ?? null,
-        all_day: Boolean(raw.all_day),
-        created_at: Date.now(),
-        updated_at: Date.now(),
-        sort_order: raw.sort_order != null ? Number(raw.sort_order) : siblings.length,
-      });
-      if (Array.isArray(raw.tag_names)) {
-        task.tags = raw.tag_names as string[];
-        task.tag_ids = task.tags.map((n) => tags.find((t) => t.name === n)?.id ?? n);
-      }
-      tasks = [...tasks, task];
-      rollUp();
-      return task;
+      return makeFromInput({ ...raw, parent_id: parent.id, project_id: raw.project_id ?? parent.project_id });
     },
     task_delete: ({ id }) => {
       const ids = [String(id), ...subtreeIds(String(id))];

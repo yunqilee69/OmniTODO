@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   Button,
   Checkbox,
@@ -29,6 +29,7 @@ import AttachmentList from "./AttachmentList";
 import MarkdownPreview from "./MarkdownPreview";
 import RecurrenceEditor from "./RecurrenceEditor";
 import TagPicker from "./TagPicker";
+import TaskComposer from "./TaskComposer";
 import TaskRow from "./TaskRow";
 
 /** Task detail dialog (design §13.2): description + preview, subtasks, tags,
@@ -46,10 +47,8 @@ export default function TaskDetail({
   onClose: () => void;
   onOpenTask: (id: string) => void;
 }) {
-  const qc = useQueryClient();
   const { patch, toggle, remove, move } = useTaskMutations();
   const [desc, setDesc] = useState<string | null>(null);
-  const [subtask, setSubtask] = useState("");
   const [addingSubtask, setAddingSubtask] = useState(false);
   const [previewDesc, setPreviewDesc] = useState(false);
 
@@ -65,23 +64,12 @@ export default function TaskDetail({
   });
   const { data: projects } = useQuery({ queryKey: qk.projects, queryFn: () => api.projectList() });
 
-  // New task selected → drop the stale description draft and close the add-subtask field.
+  // New task selected → drop the stale description draft and close the add-subtask box.
   useEffect(() => {
     setDesc(null);
     setPreviewDesc(false);
-    setSubtask("");
     setAddingSubtask(false);
   }, [taskId]);
-
-  const addSubtask = useMutation({
-    mutationFn: (title: string) => api.taskAddSubtask(taskId!, { title }),
-    onSuccess: () => {
-      setSubtask("");
-      qc.invalidateQueries({ queryKey: qk.subtasks(taskId ?? "") });
-      qc.invalidateQueries({ queryKey: qk.tasksAll });
-      qc.invalidateQueries({ queryKey: qk.projects });
-    },
-  });
 
   const commit = (p: TaskPatch) => task && patch.mutate({ id: task.id, patch: p });
 
@@ -281,31 +269,32 @@ export default function TaskDetail({
               )
             }
           >
-            <ul className="mb-2 divide-y divide-[var(--border-hairline)]">
+            {/* The box that opens is `TaskComposer` — the same one every view
+                adds tasks with. The `＋` above is this section's own affordance,
+                so the composer draws no add row of its own, and it is not inset
+                to the list's checkbox column: the section title already says
+                these are subtasks, and the inset would leave it narrower than
+                every other field in this form. */}
+            <ul className="divide-y divide-[var(--border-hairline)]">
               {(subtasks ?? []).map((s) => (
                 <SubtaskRow key={s.id} task={s} onOpen={onOpenTask} />
               ))}
               {(subtasks ?? []).length === 0 && (
-                <li className="px-3 py-2 text-xs opacity-60">暂无子任务</li>
+                <li className="py-2 text-xs opacity-60">暂无子任务</li>
+              )}
+              {addingSubtask && (
+                <TaskComposer
+                  projectId={task.project_id ?? ""}
+                  projectName={(projects ?? []).find((p) => p.id === task.project_id)?.name}
+                  projectColor={(projects ?? []).find((p) => p.id === task.project_id)?.color}
+                  parentId={task.id}
+                  noun="子任务"
+                  inset={false}
+                  showTrigger={false}
+                  onClose={() => setAddingSubtask(false)}
+                />
               )}
             </ul>
-            {addingSubtask && (
-              <Input
-                size="small"
-                autoFocus
-                placeholder="子任务标题，回车确认（Esc 取消）"
-                value={subtask}
-                onChange={(e) => setSubtask(e.target.value)}
-                onPressEnter={() => subtask.trim() && addSubtask.mutate(subtask.trim())}
-                onBlur={() => !subtask.trim() && setAddingSubtask(false)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    setSubtask("");
-                    setAddingSubtask(false);
-                  }
-                }}
-              />
-            )}
           </Section>
 
           <Typography.Text
@@ -327,6 +316,10 @@ function SubtaskRow({ task, onOpen }: { task: TaskDto; onOpen: (id: string) => v
   return (
     <TaskRow
       task={task}
+      // No drag handle and no caret are offered in here, so the row drops the
+      // two gutters that reserve room for them and starts at the section's left
+      // edge, in line with the add box below and the rest of the form.
+      gutters={false}
       onOpen={onOpen}
       onToggle={(t) => toggle.mutate(t)}
       onPatch={(id, p) => patch.mutate({ id, patch: p })}

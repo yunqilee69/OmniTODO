@@ -50,6 +50,12 @@ export interface TaskRowProps {
   expanded?: boolean;
   /** Toggling is only offered when the list provides this. */
   onToggleExpand?: (id: string) => void;
+  /** Reserve the two lead gutters — the drag handle slot and the subtask caret
+   *  slot — and the left inset they sit in. Off for the detail panel's
+   *  checklist: neither is ever offered there, and with the gutters gone the
+   *  rows line up with the section's other fields instead of hanging off a
+   *  checkbox column of their own. */
+  gutters?: boolean;
   /** dnd-kit node ref / positioning, applied to the row element itself. */
   innerRef?: (el: HTMLLIElement | null) => void;
   style?: CSSProperties;
@@ -86,6 +92,7 @@ export default function TaskRow({
   depth = 0,
   expanded = false,
   onToggleExpand,
+  gutters = true,
   innerRef,
   style,
   className = "",
@@ -200,10 +207,10 @@ export default function TaskRow({
       ref={innerRef}
       data-index={dataIndex}
       style={{
-        paddingLeft: `${rowPaddingLeft(depth)}px`,
+        paddingLeft: gutters ? `${rowPaddingLeft(depth)}px` : 0,
         // Read by the shared `.task-panel` rule that draws the hairline above
         // this row (see index.css).
-        "--rule-inset": `${rowRuleInset(depth)}px`,
+        "--rule-inset": gutters ? `${rowRuleInset(depth)}px` : "0px",
         animationDelay: animateIn ? `${Math.min(index, 8) * 24}ms` : undefined,
         // The checkbox ring is the row's only priority channel (§8.4); the
         // custom property lets the shared CSS rule read the per-row hue.
@@ -218,32 +225,36 @@ export default function TaskRow({
           (always visible — §8.3: the arrow is a hint, not hover chrome);
           otherwise it holds the drag handle, which is hover-revealed. A row
           with a caret pushes the handle one slot further left. */}
-      <span className="flex h-[1.5em] w-4 shrink-0 items-center justify-center">
-        {task.has_subtasks && onToggleExpand ? handle : null}
-      </span>
-      <span className="flex h-[1.5em] w-4 shrink-0 items-center justify-center">
-        {task.has_subtasks && onToggleExpand ? (
-          <Button
-            type="text"
-            size="small"
-            style={{ padding: 0, width: 16, height: 16, minWidth: 16 }}
-            aria-label={expanded ? `收起 ${task.title} 的子任务` : `展开 ${task.title} 的子任务`}
-            aria-expanded={expanded}
-            onClick={() => onToggleExpand(task.id)}
-            icon={
-              <CaretRightOutlined
-                style={{
-                  fontSize: 10,
-                  color: "var(--text-tertiary)",
-                  transform: expanded ? "rotate(90deg)" : undefined,
-                }}
+      {gutters && (
+        <>
+          <span className="flex h-[1.5em] w-4 shrink-0 items-center justify-center">
+            {task.has_subtasks && onToggleExpand ? handle : null}
+          </span>
+          <span className="flex h-[1.5em] w-4 shrink-0 items-center justify-center">
+            {task.has_subtasks && onToggleExpand ? (
+              <Button
+                type="text"
+                size="small"
+                style={{ padding: 0, width: 16, height: 16, minWidth: 16 }}
+                aria-label={expanded ? `收起 ${task.title} 的子任务` : `展开 ${task.title} 的子任务`}
+                aria-expanded={expanded}
+                onClick={() => onToggleExpand(task.id)}
+                icon={
+                  <CaretRightOutlined
+                    style={{
+                      fontSize: 10,
+                      color: "var(--text-tertiary)",
+                      transform: expanded ? "rotate(90deg)" : undefined,
+                    }}
+                  />
+                }
               />
-            }
-          />
-        ) : (
-          handle
-        )}
-      </span>
+            ) : (
+              handle
+            )}
+          </span>
+        </>
+      )}
 
       <span className="flex h-[1.5em] shrink-0 items-center">
         <Checkbox

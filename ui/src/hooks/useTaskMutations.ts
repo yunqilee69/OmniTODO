@@ -60,6 +60,14 @@ export function useTaskMutations() {
     onSettled: invalidateAll,
   });
 
+  /** A child files under its parent through its own command, so the core can
+   *  inherit the parent's project and enforce the depth limit (§5.5). */
+  const addSubtask = useMutation({
+    mutationFn: ({ parentId, input }: { parentId: string; input: Parameters<typeof api.taskAddSubtask>[1] }) =>
+      api.taskAddSubtask(parentId, input),
+    onSettled: invalidateAll,
+  });
+
   const remove = useMutation({
     mutationFn: (id: string) => api.taskDelete(id),
     onSettled: invalidateAll,
@@ -80,5 +88,5 @@ export function useTaskMutations() {
     onSettled: invalidateAll,
   });
 
-  return { toggle, patch, create, remove, move, reorder, invalidateAll };
+  return { toggle, patch, create, addSubtask, remove, move, reorder, invalidateAll };
 }
