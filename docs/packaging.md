@@ -147,6 +147,40 @@ cd omnitodo-desktop && npm run icons         # tauri icon：全套 PNG / .ico / 
 `Provides: libgtk-3-0`，所以 `t64` 改名不会导致依赖不可满足
 （已用 `apt-get install ./OmniTODO_0.1.0_amd64.deb` 实测确认）。
 
+## GitHub Actions 三端自动发布
+
+`.github/workflows/release.yml` 是上面那些本地路径在 CI 上的等价物：推一个 `v*` 标签
+就出三端安装包并建 Release；在 Actions 页面手动 `workflow_dispatch` 则只构建、只上传
+artifacts，不建 Release（用来试跑）。
+
+| 平台 | runner | 产物 |
+| --- | --- | --- |
+| Windows | `windows-latest` | NSIS `.exe`、WiX `.msi` |
+| macOS | `macos-latest` | universal `.dmg`（x86_64 + arm64 合并） |
+| Linux | `ubuntu-22.04` | `.deb`、`.AppImage`、`.rpm` |
+
+- **标签号必须与版本号一致**：`omnitodo-desktop/tauri.conf.json` 的 `version` 是
+  `0.1.0` 就得推 `v0.1.0`，工作流第一步就校验，不一致直接失败——否则安装包文件名里的
+  版本号与 Release 号对不上。
+- 步骤顺序与本地脚本一致：前端 `ui/dist` → 侧车 → `tauri build`。CI 里前端已单独构建过，
+  所以 `tauri build` 显式传 `--config '{"build":{"beforeBuildCommand":""}}'` 跳过重复构建。
+- Linux 用 `ubuntu-22.04` 而不是 `24.04`：glibc 基线更低，装出来的 deb / AppImage 兼容面更广。
+- macOS 出的是 **universal** 包（`tauri build --target universal-apple-darwin`，需要先
+  `rustup target add x86_64-apple-darwin aarch64-apple-darwin`）。Tauri 只把**主程序**
+  lipo 成胖二进制（`crates/tauri-cli/src/interface/rust/desktop.rs` 里那一小段 `lipo`），
+  侧车得自己合并：工作流把两个架构的 `omnitodo-mcp` 用 `lipo -create` 合成
+  `omnitodo-desktop/binaries/omnitodo-mcp-universal-apple-darwin`。名字不能省——Tauri 找侧车
+  是拿 `externalBin` 直接拼 `--target` 的原值（`tauri-utils` 的 `external_binaries`），
+  universal 构建要找的就是这个名字，给它两个单架构文件反而不对。
+- 三端产物都是**未签名**的：Windows 触发 SmartScreen 提示，macOS 首次打开需右键→打开或
+  `xattr -dr com.apple.quarantine`；签名 / 公证见文末「尚未完成」。
+- 缓存：`ui` 与 `omnitodo-desktop` 各有一份 `package-lock.json`（根目录没有 `package.json`，
+  所以 `setup-node` 的缓存键必须用 `cache-dependency-path` 指到这两份）；Rust 侧用
+  `Swatinem/rust-cache`，两个 target 目录（根 workspace 与 `omnitodo-desktop`）都缓存。
+
+CI 本身没法在本机验证，第一次跑建议先在 Actions 页面 `workflow_dispatch` 试一遍，
+三端都绿了再推标签。
+
 ## 更新方式
 
 不做自动更新（设计 §15）。设置页与「关于」展示 `app.releases_url`
