@@ -131,7 +131,7 @@ async fn write_tool_audited_when_enabled() {
 async fn list_tools_return_an_object_not_an_array() {
     let (rw, _d) = ctx(true).await;
     rw.core
-        .create_project(CreateProjectInput { name: "智搭".into(), ..Default::default() })
+        .create_project(CreateProjectInput { name: "示例项目".into(), ..Default::default() })
         .await
         .unwrap();
 
@@ -165,7 +165,7 @@ async fn list_tasks_defaults_to_open_and_filters() {
     let (rw, _d) = ctx(true).await;
     let project = rw
         .core
-        .create_project(CreateProjectInput { name: "智搭".into(), ..Default::default() })
+        .create_project(CreateProjectInput { name: "示例项目".into(), ..Default::default() })
         .await
         .unwrap();
     let open = rw
@@ -212,12 +212,12 @@ async fn list_tasks_defaults_to_open_and_filters() {
     assert_eq!(resp["result"]["structuredContent"]["items"][0]["id"], open.id);
 
     // Completed only, selected by the project name rather than its id.
-    let resp = call(json!({ "scope": "completed", "project": "智搭" })).await;
+    let resp = call(json!({ "scope": "completed", "project": "示例项目" })).await;
     assert_eq!(resp["result"]["structuredContent"]["total"], 1, "{resp}");
     assert_eq!(resp["result"]["structuredContent"]["items"][0]["id"], done.id);
 
     // Everything in the project.
-    let resp = call(json!({ "scope": "all", "project": "智搭" })).await;
+    let resp = call(json!({ "scope": "all", "project": "示例项目" })).await;
     assert_eq!(resp["result"]["structuredContent"]["total"], 2, "{resp}");
 
     // Priority narrows the open set down to the high one.
@@ -238,7 +238,7 @@ async fn list_tasks_defaults_to_open_and_filters() {
     // The same arguments drive search and export, which previously dropped them.
     let resp = call_tool(&rw, "search_tasks", json!({ "query": "做完", "scope": "completed" })).await;
     assert_eq!(resp["result"]["structuredContent"]["total"], 1, "{resp}");
-    let resp = call_tool(&rw, "export_tasks", json!({ "scope": "completed", "project": "智搭" })).await;
+    let resp = call_tool(&rw, "export_tasks", json!({ "scope": "completed", "project": "示例项目" })).await;
     let data = resp["result"]["structuredContent"]["data"].as_str().unwrap();
     assert!(data.contains("做完了"), "export missed the completed task: {data}");
     assert!(!data.contains("还没做"), "export included an open task: {data}");
@@ -251,11 +251,11 @@ async fn get_project_accepts_a_name() {
     let (rw, _d) = ctx(true).await;
     let project = rw
         .core
-        .create_project(CreateProjectInput { name: "智搭".into(), ..Default::default() })
+        .create_project(CreateProjectInput { name: "示例项目".into(), ..Default::default() })
         .await
         .unwrap();
 
-    let resp = call_tool(&rw, "get_project", json!({ "id": "智搭" })).await;
+    let resp = call_tool(&rw, "get_project", json!({ "id": "示例项目" })).await;
     assert_eq!(resp["result"]["isError"], false, "{resp}");
     assert_eq!(resp["result"]["structuredContent"]["id"], project.id);
 

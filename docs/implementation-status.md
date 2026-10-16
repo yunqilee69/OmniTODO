@@ -122,9 +122,9 @@
 验证：`cargo test --workspace` 48 passed（core 38 + mcp 10）；`cargo clippy --workspace
 --all-targets` 0 warning；`cd ui && npm test` 98 passed、`tsc --noEmit` 通过。
 另外用真实二进制对本机 `~/.omnitodo/omnitodo.db` 的副本重放了报告里的调用：
-`list_tasks {scope:completed, project:"智搭"}` 返回 7 条、`list_tasks {}` 返回 0 条、
+`list_tasks {scope:completed, project:"示例项目"}` 返回 7 条、`list_tasks {}` 返回 0 条、
 `search_tasks {query:"fastjson", scope:completed}` 命中 1 条、
-`export_tasks {scope:completed}` 导出 7 行 CSV、`get_project {id:"智搭"}` 解析到
+`export_tasks {scope:completed}` 导出 7 行 CSV、`get_project {id:"示例项目"}` 解析到
 `01a132e1-…`、`summary_report {days:7}` 给出 `completed=7` / `completed_in_window=7` /
 `throughput=[["2026-10-15",7]]`、`scope:"nope"` 报 validation 错误。
 
