@@ -180,11 +180,12 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Pushed in past the row's indent: file it as that row's first child. This
-    // is the one drop that crosses groups — a task can land under any visible
-    // row, not only beside its current siblings. `task_move` cannot change the
-    // parent (it only relocates between projects), so the parent goes through
-    // the patch, and the core then pulls the subtree into the parent's project.
+    // Pushed in past the row's indent: file it as that row's first child. A task
+    // can land under any visible row, however deep. `task_move` cannot change the
+    // parent (it only relocates between projects), so the parent goes through the
+    // patch, and the core then pulls the subtree into the parent's project.
+    // Landing *first* under the new parent is the rule here: the child slot is
+    // the bottom band pushed right, and the top band already means "before".
     if (intent === "child") {
       if (!findCachedTask(qc, overId)) return;
       try {
