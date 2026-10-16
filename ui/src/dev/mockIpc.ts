@@ -70,12 +70,12 @@ function makeTask(over: Partial<TaskDto> & Pick<TaskDto, "id" | "title">): TaskD
   };
 }
 
-const WORK = "t-work";
+const HOME = "t-home";
 
 let projects: Omit<ProjectDto, "stats">[] = [
   {
     id: "p-zhi",
-    name: "智搭",
+    name: "装修新家",
     description: null,
     color: "#d8493c",
     icon: null,
@@ -87,7 +87,7 @@ let projects: Omit<ProjectDto, "stats">[] = [
   },
   {
     id: "p-zhong",
-    name: "中保投",
+    name: "周末露营",
     description: null,
     color: "#3f7c4f",
     icon: null,
@@ -103,18 +103,18 @@ let tasks: TaskDto[] = [
   makeTask({
     id: "t1",
     project_id: "p-zhi",
-    title: "排查知识库弹窗加载缓慢和工作台第一次进入加载缓慢的问题",
+    title: "确认水电改造的报价单，对比两家施工队",
     priority: "high",
     due_at: civil(-1),
     all_day: true,
     sort_order: 0,
-    tag_ids: [WORK],
-    tags: ["工作"],
+    tag_ids: [HOME],
+    tags: ["家庭"],
   }),
   makeTask({
     id: "t2",
     project_id: "p-zhi",
-    title: "知行开启多租户，智搭这边应该会出现问题，需要补充多租户能力",
+    title: "挑厨房瓷砖的样品，贴上墙看自然光下的色差",
     priority: "medium",
     section_id: "s-now",
     sort_order: 1,
@@ -122,15 +122,15 @@ let tasks: TaskDto[] = [
   makeTask({
     id: "t3",
     project_id: "p-zhi",
-    title: "工作流中的工具调用节点，调整为agent。并支持挂载skills。",
-    description: "还有现在的添加添加tab，共享应用，共享工具。调整为工作流，工具，外加一个技能",
+    title: "规划阳台的收纳布局",
+    description: "先量好尺寸再选置物架，绿植区要留出浇水的动线",
     priority: "medium",
     sort_order: 2,
   }),
   makeTask({
     id: "t4",
     project_id: "p-zhi",
-    title: "新增对话接口，实现断线重连的效果。需要在对话列表支持显示输出状态。就是多任务切换的效果",
+    title: "约物业确认封窗施工需要的手续和进场时间",
     priority: "low",
     section_id: "s-now",
     sort_order: 3,
@@ -138,25 +138,25 @@ let tasks: TaskDto[] = [
   makeTask({
     id: "t5",
     project_id: "p-zhi",
-    title: "目前发版还是无法发版，原因是有重复类，需要继续修改",
+    title: "家具进场前先铺好地面保护膜",
     priority: "urgent",
     due_at: civil(1),
     all_day: true,
     sort_order: 4,
-    tag_ids: [WORK],
-    tags: ["工作"],
+    tag_ids: [HOME],
+    tags: ["家庭"],
   }),
   makeTask({
     id: "t6",
     project_id: "p-zhi",
-    title: "v5文档使用智搭知识库和悬浮球",
+    title: "客厅主灯换成可以调色温的款式",
     section_id: "s-next",
     sort_order: 5,
   }),
   makeTask({
     id: "t7",
     project_id: "p-zhi",
-    title: "sinitek-excel组件升级，注意vue3版本。ppt预览调整为新增的sinitek-office-slides",
+    title: "整理全屋开关插座的点位清单",
     priority: "high",
     sort_order: 6,
   }),
@@ -164,14 +164,14 @@ let tasks: TaskDto[] = [
     id: "t7a",
     parent_id: "t7",
     project_id: "p-zhi",
-    title: "确认 vue3 版本兼容性",
+    title: "逐个房间核对插座的数量和安装高度",
     sort_order: 0,
   }),
   makeTask({
     id: "t7b",
     parent_id: "t7",
     project_id: "p-zhi",
-    title: "评估 ppt 预览替换成 sinitek-office-slides 的成本",
+    title: "给厨房的小家电单独留一路电",
     sort_order: 1,
   }),
   // A grandchild, so the preview exercises a nested branch (caret at depth 2).
@@ -179,20 +179,20 @@ let tasks: TaskDto[] = [
     id: "t7a1",
     parent_id: "t7a",
     project_id: "p-zhi",
-    title: "补齐升级后的回归用例",
+    title: "把弱电箱的走线图一并更新",
     sort_order: 0,
   }),
   makeTask({
     id: "t8",
     project_id: "p-zhi",
-    title: "补充灰度发布回滚脚本",
+    title: "定好各工种的进场顺序",
     status: "done",
     completed_at: SEEDED_AT + DAY,
     section_id: "s-next",
     sort_order: 7,
   }),
-  makeTask({ id: "t9", project_id: "p-zhong", title: "整理中保投数据接入清单", sort_order: 0 }),
-  makeTask({ id: "t10", title: "把设计稿里的空状态补上" }),
+  makeTask({ id: "t9", project_id: "p-zhong", title: "列出露营装备清单，检查气罐和头灯", sort_order: 0 }),
+  makeTask({ id: "t10", title: "清理订阅邮件和下载文件夹" }),
 ];
 
 let sections: SectionDto[] = [
@@ -218,7 +218,7 @@ let sections: SectionDto[] = [
   },
 ];
 
-let tags: TagDto[] = [{ id: WORK, name: "工作", color: null, count: 2 }];
+let tags: TagDto[] = [{ id: HOME, name: "家庭", color: null, count: 2 }];
 
 const settings = new Map<string, unknown>([
   ["ui.theme", "dark"],
