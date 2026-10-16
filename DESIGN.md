@@ -281,7 +281,7 @@ TODO 应用的使用场景对风格有明确约束：
 - 高度按密度模式；行左缘是一条干净的直线——优先级不在这里（见 §3.3/§8.4）。
 - 标题：`body`；完成态 `--text-disabled` + 删除线（删除线动画见 §9）。
 - **列表容器只有发丝线**：行与行之间 `1px --border-hairline` 分隔，容器本身不要外框、圆角、底色或阴影（§5.4 的 `--e0` 默认）。任务行是"一叠规则线"，不是"一叠卡片"。发丝线**左端从复选框列起画**，不横穿手柄/箭头所在的左侧槽位；右端到内容栏右缘。列表在一条**定宽内容栏**里（上限 760），所以发丝线只跟任务一样长，不会横贯整个窗口；页头是通栏的（标题靠左、工具靠右），两者不必对齐。**居中以列表为准**：内容栏整体左移半个左侧槽位宽度，让复选框列与标题回到轴线上——两个槽位是操作外壳，居中的是任务；纯居中内容栏会把整列任务推到轴线右侧。
-- **任意深度的分支都能开合**：子任务行与顶层行是同一套行——在可拖拽的列表里它同样带手柄，且自己还有子任务时带上展开箭头，展开/折叠自己的那一支。不展开就看不到更深的层级，不会一次性铺开整棵子树。每个兄弟组各自一个 `SortableContext`（拖拽仍在组内排序），但**落点看的是悬停那一行**：拖到某一行的上/下半带＝落在它旁边、继承它的父级，往右推一格＝成为它的第一个子任务（`lib/nestDrop.ts`）。所以子任务拖到顶层行旁边（或拖到自己父行旁边）就**升回上一层**，写 `task_update {clear_parent_id}`；落到更深的行旁边则跟着下潜。回写时不再以"拖拽前的兄弟组"为目标，而是以**悬停行的父级**为准，这样"拖进去"和"拖出来"是同一条规则的两个方向。
+- **任意深度的分支都能开合**：子任务行与顶层行是同一套行——在可拖拽的列表里它同样带手柄，且自己还有子任务时带上展开箭头，展开/折叠自己的那一支。不展开就看不到更深的层级，不会一次性铺开整棵子树。每个兄弟组各自一个 `SortableContext`（拖拽动画仍按组预览），但**落点由指针的两个独立读数决定**（Todoist 式，`lib/nestDrop.ts`）：**垂直**位置只选间隙——悬停行的上半带落在它前面、下半带落在它后面；**水平**位移只定层级——每 20px 一格（`round(dx / ROW_INDENT_STEP)`），所以一次拖拽就能跨多层，而不是一层一次。层级再被相邻行夹紧（不得比上一行深一层以上、不得比下一行浅，否则列表就不是树了），最后**由层级推导父级**：同级＝继承上一行的父级，深一级＝上一行即父级，更浅则回退到最近一个同级行的父级。父级从不直接选定，所以「拖进去」和「拖出来」是同一条规则的两个方向——子任务拖到顶层行旁边（或拖到自己父行旁边）就**升回上一层**，落到更深的行旁边则跟着下潜。落点线按推导出的层级内缩，层级在松手之前就看得见。深度上限 5（`MAX_TASK_DEPTH`，与 core `ensure_parent` 一致），落进自己子树、或自己当自己父级的落点在客户端先被拒（core 也会拒）。回写不再以「拖拽前的兄弟组」为目标：只有父级真的变了才写 `task_update {parent_id | clear_parent_id}`，顺序一律写 `task_reorder(order)`。
 - **行内元信息集中在标题下方一行**（Todoist 式）：日期 chip 与子任务进度同处一行、间隔 12px，`meta` 字号，与标题左对齐；行右端只留标签、附件/重复图标和悬停才出现的 `＋日期` / `⋯`。这样扫读时"何时到期、还有几个子任务"紧贴标题，视线不用横穿整行。
 - 悬停：**行本身不加底色**——悬停要露出的手柄与 `＋日期` / `⋯` 淡入就是反馈；整行铺一层 `--bg-hover` 会让"一叠规则线"变浑浊（§8.1 的侧栏导航项仍用 `--bg-hover`，那里是单行、需要指出落点）。**悬停不得改变行高**——所以没有日期时"＋日期"待在右侧槽位里淡入，而不是在标题下方凭空多出一行。
 - 逾期：日期用 `--state-overdue` 文字 + 小警示线性图标（不单靠红色）；今天用 `--accent`（§6.3）；其余日期 `--text-tertiary`。
@@ -329,7 +329,8 @@ TODO 应用的使用场景对风格有明确约束：
 ### 8.10 详情面板（`TaskDetail.tsx`）
 - 单列分区，区段间 `--border-hairline` 分隔，不用卡片套卡片（子任务清单同样只有发丝线，没有外框）。
 - 子任务清单整列**不缩进**（`TaskRow gutters={false}`）：区段标题已说明这里是子任务，再按复选框列缩进会让行和下面的输入框都比同表单其它字段窄一截——清单行的复选框、下面的添加框、上面「重复」的输入框共用区段左边缘。输入框就是 §8.17 那个盒子（`TaskComposer`），只是落库走 `task_add_subtask`（项目随父任务继承，深度上限 5），入口是**区段标题右端的「＋」**（`showTrigger={false}`，盒子只在打开时挂载）。
-- 标题为大号可编辑文本（`section`/`title` 字号）。完成、优先级、时间、项目为一组"属性行"。
+- 标题为大号可编辑文本（`section`/`title` 字号）。完成、优先级、开始/截止、项目/板块为一组"属性行"。
+- **板块**（「板块」下拉，设计 §5.9）：选项是「无板块」+ 本项目全部板块。子任务该项禁用并显示「子任务跟随父任务」——板块是顶层任务的位置，子任务的位置就是父任务；任务没有项目时同样禁用。
 - 描述：Markdown `textarea` + 预览切换（`MarkdownPreview.tsx`）。
 - 附件：行式列表（图标 + 文件名 + 大小 + 删除），拖入上传区用虚线 `--border-strong`。
 - 重复编辑器（`RecurrenceEditor.tsx`）：频率分段控件 + 间隔/星期选择，预览人类可读文案。
@@ -346,11 +347,13 @@ TODO 应用的使用场景对风格有明确约束：
 - 下方按需展示实时解析 chips（标题 / `#项目` / `!优先级` / `^时间` / `@标签` / `::描述`）与 `#项目` 歧义选择列表（设计 §12.2）；无解析结果时给一行简写提示。
 - 唤起：侧栏「添加任务」按钮、全局快捷键、**托盘菜单「快速添加…」**，均打开同一面板；托盘/快捷键这两种窗口外的入口要**先把主窗口抬到前台**（`unminimize` + `show` + `set_focus`）再发 `quickadd:open`，否则面板开在用户看不见的地方。回车落库并关闭；Esc、点击面板外关闭。
 
-### 8.13 日历（`Calendar.tsx`）
+### 8.13 日历（`Calendar.tsx` / `CalendarBoard.tsx`）
 - 月/周网格；格内任务用小条（`--r-xs`），颜色取项目色或优先级刻度。
 - 今天格：`--accent` 描边 + `--accent-soft` 底。
 - 已物化期次：实心、可拖；未来重复期次：虚线、只读（设计 §13.1）。
 - "现在"指针线（§6.5）。
+- **格内空白处可点**：点一下在该日新建任务（全天），这是日历里唯一的"新建"入口，所以空白处不是死区。条目自身要 `stopPropagation`，否则点任务会变成在同一天再建一个。
+- 项目视图里同一个 `CalendarBoard` 以 `embedded` 模式嵌入（不吃外层 24px 内边距，标题栏由项目页提供），并按 `project_id` 只显示该项目。
 
 ### 8.14 空状态
 - 居中：Fraunces 大标题（如"今天很干净"）+ 一句次级说明 + 一个 Primary 操作。
@@ -372,6 +375,21 @@ TODO 应用的使用场景对风格有明确约束：
 - 日期是"整天"，落库写 `all_day`，避免跨时区漂移。
 - 键盘：`Enter` 落库并清空、焦点留在标题继续下一条；`Esc` 收起；两行都空时失焦自动收起。
 - **易错点**：标签 / 提醒 / 重复**不**放在这里——它们的简写入口归悬浮快速添加面板（§8.12），同一字段有第三处入口就多一处要维护。
+
+### 8.18 板块标题与看板（`SectionHeader.tsx` / `BoardView.tsx`，设计 §5.9）
+- **板块标题行**（列表视图）：与任务行**共用同一套左侧栏位**——折叠箭头占复选框列，名称与计数占标题列，悬停才出现的「＋」（在该板块新建任务）和常驻的 `⋯` 占右侧操作列。标题行本身不是任务行，所以左侧没有复选框。
+- 名称 `strong` + `micro` 计数（`--text-tertiary`，`tabular`）；折叠箭头是 Ghost 图标按钮，`aria-label` 在「收起板块 X / 展开板块 X」之间切换。双击名称就地重命名，输入框的边框用 `--border-strong`，空名或重名时 `status="error"` 并在下方给一行 `--state-danger` 说明。
+- **板块换位在列表里走 `⋯` 菜单的「上移 / 下移」**，不用拖动手柄：应用级的拖拽上下文是"任务"形状的，为板块再塞一套拖拽语义会让同一片区域出现两种落点解释。看板才是板块拖动的地方。
+- **「无板块」组只在项目里已有板块时显示标题**，且永远排在最前；它没有 `⋯`、没有拖动手柄——它不是实体。末尾一行「添加板块」是通栏 Ghost 按钮，`＋` 用 `--accent`，与 §8.17 的「添加任务」同一形状。
+- **看板列**：宽 **286px**（Todoist 的 `--section-board-width`）——窄到卡片读起来是卡片而不是页面，宽到能容下标题和一行日期。列底 `--bg-sunken`，`1px --border-hairline`，`--r-md`；拖动中的列降到 40% 不透明度，被指向的列描边换成 `--accent`。
+- 列头：`strong` 名称 + `micro` 计数 + 右侧「拖动手柄（HolderOutlined，`cursor-grab`）」+ `⋯` 菜单（重命名 / 删除）。**列头没有折叠控件**——看板里折叠一列没有意义。
+- 列体从列头一直铺到列脚，整段都是落点：最后一张卡片下方的空白也是"追加到本列"，不是死区。空列保留 1px 占位，否则它测不到尺寸、收不了拖放。
+- 列脚是「＋ 添加任务」（`ColumnComposer`），**不在列头**：列头已经有三样东西，再加一个会让"哪一列"的识别变慢。Todoist 的做法相同——`board_section__footer` 只有一个槽位，收起时是触发按钮、展开时是编辑器，二者互斥。
+- **列脚的两个状态与 §8.17 的列表 composer 是同一套语言，只是更瘦**：收起态是列内的 `＋ 添加任务` 行（`px-2 py-1.5`，圆角与卡片一致，左缘对齐上方卡片的复选框列），悬停除了文字变 `--accent` 还铺一层 `--bg-hover`（`.composer-trigger--board`）——它坐在一列卡片中间，要像一张卡片那样响应悬停。展开态是**卡片形的输入框**：`--bg-surface` + `1px --border-strong` + `--e1`，含「任务名称」与「描述」两行无边框输入，底部分隔线下是工具行（板块 chip `# 名称`，无板块列不放 chip——"无板块"不是名字）+ `×` 收起。它比列表 composer 少优先级与日期 chip：286px 的列放不下，同一字段该有的入口在卡片详情里。
+- 键盘与列表 composer 相同：`Enter` 落库并清空、焦点留在标题继续下一条；`Esc` 收起；两行都空时失焦自动收起。
+- **末尾「添加板块」是一根列，不是一枚按钮**：同宽、通高、同圆角，虚线 `--border-strong` 且不铺底——它是"将有一列"的空槽，不是一列。Todoist 的 `board_view__add_section` 同形（`height: full` 的列，内含触发钮或就地表单）。行内 `px-2.5 py-2` 与列头对齐。
+- **卡片**：`--bg-surface` + `1px --border-hairline` + `--r-md`，`p-2`，卡片间 `6px`；优先级用复选框圆环刻度（§8.5）。卡片只放顶层任务，显示日期 chip、`子任务完成 n/m`、`#标签`；副标题两行截断。拖动中降到 40% 不透明度。
+- **易错点**：卡片的复选框 / 标题 / `⋯` 都要 `stopPropagation` 掉 `pointerdown`，否则点它们会被当成拖拽起点——它们本身又都是按钮，落点会变成"既点又拖"。
 
 ---
 
@@ -600,7 +618,7 @@ export default {
 | 层 | 落地 |
 |---|---|
 | 主题 | `src/theme/antd.ts`：`buildAntdTheme(light|dark)` 把 §3 调色板映射为 `colorPrimary`（仪表绿）、`colorBgLayout/Container/Elevated`、`colorText*`、`colorBorder*`、`borderRadius`、`fontFamily`、`controlHeight` 等，并按明暗切换 `defaultAlgorithm`/`darkAlgorithm`；`Layout`/`Menu`/`Card`/`Segmented`/`Drawer` 等做了组件级覆盖 |
-| 组件 | 应用壳用 `Layout`+`Sider`+`Menu`；任务行用 `Checkbox`/`Typography.Text(delete,ellipsis)`/`Tag`/`Dropdown`/`DatePicker`/`Tooltip`；详情用 `Drawer`+`Select`/`DatePicker`/`Switch`/`Input.TextArea`/`Popconfirm`；提醒用 `App.useApp().notification`；日历/快速添加/设置用 `Segmented`/`Button`/`Tag`/`Alert`/`Card`/`Upload`/`Switch`；设置页的 MCP 面板另用 `Tabs`（按客户端分页）与 `Table`（能力对照表）；加载/空/错误态用 `Skeleton`/`Empty`/`Alert`；表单校验与反馈用 `Popconfirm`/`message` |
+| 组件 | 应用壳用 `Layout`+`Sider`+`Menu`；任务行用 `Checkbox`/`Typography.Text(delete,ellipsis)`/`Tag`/`Dropdown`/`DatePicker`/`Tooltip`；详情用 `Drawer`+`Select`/`DatePicker`/`Switch`/`Input.TextArea`/`Popconfirm`；提醒用 `App.useApp().notification`；日历/快速添加/设置用 `Segmented`/`Button`/`Tag`/`Alert`/`Card`/`Upload`/`Switch`；看板与板块用 `Segmented`（列表/看板/日历切换）+ `Dropdown`（板块菜单）+ `Input`（就地重命名）；设置页的 MCP 面板另用 `Tabs`（按客户端分页）与 `Table`（能力对照表）；加载/空/错误态用 `Skeleton`/`Empty`/`Alert`；表单校验与反馈用 `Popconfirm`/`message` |
 | 自留样式 | `src/index.css` 只保留 antd 不负责的部分：调色板 CSS 变量（供纸纹、优先级圆环色、行悬停使用）、页面底色/字体、细滚动条、纸纹、`tabular` 数字；外加**任务行的自有外观**（§8.3/§8.4）：`.task-row` 的悬停底色、次级操作（`＋日期` / `⋯`）的淡入、添加框的聚焦态，以及把 antd v6 的方形复选框改成圆形并按 `--checkbox-ring` 上色——v6 把边框画在 `.ant-checkbox` 元素本身，旧版的 `.ant-checkbox-inner` 已不存在，`border-width` 需显式覆盖才能到 1.5px。§4/§5 的字阶、间距、圆角仍由 antd token 表达；§5.4 的 `--e1/--e2/--e3` 在 `index.css` 定义为 CSS 变量、由 `tailwind.config.js` 的 `boxShadow.e*` 映射成 `shadow-e*` 工具类（`--e0` 即"无类"，默认不写） |
 | 图标 | 全部改用 `@ant-design/icons`（替换原先的手写 SVG 与 emoji） |
 | 主题切换 | 明/暗/跟随系统；写 `[data-theme]` 供自留 CSS 变量，同时驱动 antd algorithm；持久化到 `settings.ui.theme` |
@@ -614,10 +632,13 @@ export default {
 Noto Sans CJK SC）；Latin 自托管 `IBM Plex Sans`，展示字体 `Fraunces Variable`、等宽 `IBM Plex Mono`
 （仅打包 latin 子集，约 250 KB）。
 
-**验证**：`cd ui && npm run build`（`tsc --noEmit` + Vite）通过；`npm test` 74/74 通过（含
-`TaskRow` / `TaskComposer` 两个组件级用例）；
-已用无头 Chrome 渲染真实页面（通过临时 `preview.html` 桩掉 Tauri IPC）核对 Inbox 明色外观。
-代价：antd 使前端产物增至约 1.3 MB（gzip ~420 KB）。像素级全页验收仍建议在真实桌面会话或
+**验证**：`cd ui && npm run build`（`tsc --noEmit` + Vite）通过；`npm test` 157/157 通过（含
+`TaskRow` / `TaskComposer` / `SubtaskRows` / `BoardView` 组件级用例，以及板块分组、看板落点、
+日历分桶与拖拽改期的纯函数用例）；
+已用无头 Chrome 渲染真实页面（通过临时 `preview.html` 桩掉 Tauri IPC）核对 Inbox 明色外观，
+并在同一预览里真拖拽核对看板换列 / 列内排序 / 板块换位、真点击核对板块分组折叠与新建、
+详情弹窗的「板块」字段、以及项目日历的按项目过滤与点选建任务。
+代价：antd 使前端产物增至约 1.5 MB（gzip ~495 KB）。像素级全页验收仍建议在真实桌面会话或
 仓库自带的 Xvfb 冒烟（`docs/implementation-status.md`）中复跑。
 
 

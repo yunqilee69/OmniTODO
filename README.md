@@ -20,9 +20,12 @@
 **组织**
 
 - 收件箱 / 今天 / 即将到来 / 日历 四个入口，外加项目、标签两套维度
+- **项目视图有三种模式**：列表 / 看板 / 日历，一个分段控件切换
+- **板块**：项目内的分栏，既是看板的一列，也是列表的分组标题。列表里按板块分组（可折叠，标题上直接新建任务），看板里一列一个板块，列可拖动换位
 - 子任务（父任务行上卷显示进度）、优先级（无 / 低 / 中 / 高 / 紧急）、描述
-- 拖拽排序；落点缩进越过某行就把它收为子任务，拖回原缩进则还原成同级
-- 日历月 / 周视图：重复任务的未来期次以虚线预告，拖动即改期
+- 拖拽排序（Todoist 式落点）：上下位置决定落在哪一行之前/之后，左右位移决定层级——往右推一格收为上一行的子任务，往左拉回则升层，一次拖拽可跨多层（最深 5 层）
+- 看板拖拽：卡片可换列、可在列内排序，拖到列体空白处追加到列尾；跨列落点同时写板块与新位置
+- 日历月 / 周视图：重复任务的未来期次以虚线预告，拖动即改期；点日期格的空白处直接在该日建任务
 
 **输入**
 
@@ -156,7 +159,7 @@ scripts/           # check.sh、图标生成、侧车构建、打包、Xvfb 冒�
 （映射见 `ui/src/theme/antd.ts`），明/暗/跟随系统三态同时驱动 antd 的
 `defaultAlgorithm`/`darkAlgorithm` 与自留的 `[data-theme]` CSS 变量。行为库各司其职：
 `@tanstack/react-query`（服务端状态）、`zustand`（UI 状态）、`react-router-dom`（路由）、
-`@dnd-kit`（拖拽排序与日历改期）、`@tanstack/react-virtual`（超过 60 行才开窗）、`i18next`。
+`@dnd-kit`（拖拽排序、看板换列、日历改期）、`@tanstack/react-virtual`（超过 60 行才开窗）、`i18next`。
 字体自托管（Fraunces 展示体 + IBM Plex Sans/Mono，中文回退系统字体）。日历网格与列表容器
 是两处刻意的自绘（antd `Calendar`/`List` 会丢跨格拖拽与虚拟化），理由见 `DESIGN.md` §15。
 
@@ -166,10 +169,10 @@ scripts/           # check.sh、图标生成、侧车构建、打包、Xvfb 冒�
 
 ```bash
 scripts/check.sh                # cargo test + clippy + 前端单测/打包，一条命令全绿
-cargo test --workspace          # core + cli + mcp，49 个测试
+cargo test --workspace          # core + cli + mcp，56 个测试
 cargo clippy --workspace --all-targets
 
-cd ui && npm install && npm test && npm run build   # 前端 118 个单测 + 严格类型检查 + 打包
+cd ui && npm install && npm test && npm run build   # 前端 157 个单测 + 严格类型检查 + 打包
 ```
 
 桌面端依赖 WebView 系统库（WebView2 / WebKitGTK / WKWebView），随 GUI 环境单独构建：

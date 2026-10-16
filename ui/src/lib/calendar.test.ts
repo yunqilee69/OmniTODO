@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupByDay, reschedulePatch } from "./calendar";
+import { groupByDay, quickAddSeedForDay, reschedulePatch } from "./calendar";
 import { civilOfDay, dayKey, fromDateInput } from "./dates";
 
 const MAR5 = new Date(2026, 2, 5, 12).getTime();
@@ -60,5 +60,26 @@ describe("groupByDay / dayKey", () => {
     );
     expect(grouped.size).toBe(1);
     expect(grouped.get(civilOfDay(MAR5))!.map((i) => i.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("quickAddSeedForDay", () => {
+  // The cell the user clicked is the cell the task must land in. The grid groups
+  // on `dayKey(day, false)` and the cell hands that same key to the seed, so the
+  // two agree by construction — this is the assertion that catches a seed built
+  // from the cell's local-midnight timestamp with UTC getters, which lands a day
+  // early east of UTC.
+  it("seeds the cell's own bucket key, all-day", () => {
+    for (const day of [MAR5, MAR8, new Date(2026, 11, 31, 0, 0, 0).getTime()]) {
+      const seed = quickAddSeedForDay(day);
+      expect(seed.all_day).toBe(true);
+      expect(seed.due_at).toBe(dayKey(day, false));
+    }
+  });
+
+  it("is a civil date — UTC midnight, with no time of day", () => {
+    const seed = quickAddSeedForDay(new Date(2026, 2, 5, 0, 0, 0, 0).getTime());
+    const d = new Date(seed.due_at);
+    expect([d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds()]).toEqual([0, 0, 0]);
   });
 });

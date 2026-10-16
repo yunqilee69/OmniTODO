@@ -317,7 +317,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Calendar { days } => {
             let now = omnitodo_core::clock::now_ms();
-            let items = core.calendar(now, now + days * 86_400_000).await?;
+            let items = core.calendar(now, now + days * 86_400_000, None).await?;
             print_json(&items)?;
         }
         Command::Parse { text } => {

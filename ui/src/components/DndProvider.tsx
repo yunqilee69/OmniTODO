@@ -2,9 +2,9 @@
 //! cross-project dragging need one shared `DndContext`, because the task list
 //! and the project sidebar are siblings in the tree).
 //!
-//! The handlers stay thin: they read the current list out of the Query cache,
-//! apply the pure helpers from `lib/reorder`, and delegate the write to the
-//! core (`task_reorder` / `task_move`).
+//! The handlers stay thin: they read the current list out of the Query cache and
+//! the visible rows off the DOM, apply the pure helpers from `lib/nestDrop`, and
+//! delegate the write to the core (`task_reorder` / `task_update`).
 
 import {
   DndContext,
@@ -23,11 +23,18 @@ import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card } from "antd";
 import { useState, type ReactNode } from "react";
-import { api, type Page, type TaskDto } from "../api/client";
+import { api, type Page, type TaskDto, type TaskPatch } from "../api/client";
 import { qk } from "../api/queryKeys";
-import { ROW_INDENT_STEP, rowRuleInset } from "../lib/layout";
-import { planDrop, resolveDropIntent, type DropIntent, type DropTarget } from "../lib/nestDrop";
+import { rowRuleInset } from "../lib/layout";
+import {
+  indentDeltaFromDrag,
+  planPlacement,
+  resolveDropBand,
+  type Placement,
+} from "../lib/nestDrop";
 import { reorderSubsequence } from "../lib/reorder";
+import { sectionForSlot } from "../lib/sections";
+import { readVisibleRows } from "../lib/visibleRows";
 
 /** Droppable id for a sidebar project row. */
 export const projectDropId = (projectId: string) => `project:${projectId}`;
@@ -86,14 +93,11 @@ export function findCachedSiblings(
   return null;
 }
 
-
 /** Where the drop line is drawn, in viewport coordinates. */
 interface DropLine {
   top: number;
   left: number;
   width: number;
-  /** A child slot nests under the row; a sibling slot reorders beside it. */
-  child: boolean;
 }
 
 /**
@@ -108,10 +112,18 @@ function pointerInRow(event: DragMoveEvent | DragEndEvent): number | null {
   return start.clientY + event.delta.y - over.top;
 }
 
+/** Resolved drop: the write to make, and the line that previews it. */
+interface DropResolution {
+  placement: Placement;
+  line: DropLine;
+  /** The section the task lands in, or `null` for "no section". Only meaningful
+   *  at the top level: a nested row belongs to its parent's column. */
+  sectionId: string | null;
+}
+
 export function TaskDndProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const [draggingTask, setDraggingTask] = useState<TaskDto | null>(null);
-  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [dropLine, setDropLine] = useState<DropLine | null>(null);
 
   const sensors = useSensors(
@@ -120,9 +132,19 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  const invalidate = (reparented: boolean) => {
+    qc.invalidateQueries({ queryKey: qk.tasksAll });
+    qc.invalidateQueries({ queryKey: qk.subtasksAll });
+    // The section headers' counts follow whatever moved in or out of a column.
+    qc.invalidateQueries({ queryKey: qk.sectionsAll });
+    if (reparented) {
+      qc.invalidateQueries({ queryKey: qk.taskAll });
+      qc.invalidateQueries({ queryKey: qk.projects });
+    }
+  };
+
   const clearDrag = () => {
     setDraggingTask(null);
-    setDropTarget(null);
     setDropLine(null);
   };
 
@@ -130,31 +152,57 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
     setDraggingTask(findCachedTask(qc, String(event.active.id)));
   };
 
-  /** Track the landing slot while the pointer moves, and draw its line. */
-  const trackDrop = (event: DragMoveEvent) => {
+  /**
+   * Resolve the drop from the live pointer: which gap, how many levels, and the
+   * line that previews it.
+   *
+   * The two readings of the pointer are independent — vertical picks the gap,
+   * horizontal picks the depth — which is what lets one drag land a task at any
+   * level instead of one level per drag. See `lib/nestDrop.ts` for the maths.
+   */
+  const resolve = (event: DragMoveEvent | DragEndEvent): DropResolution | null => {
+    const activeId = String(event.active.id);
     const overId = event.over ? String(event.over.id) : null;
-    if (!overId || isProjectDropId(overId) || overId === String(event.active.id)) {
-      setDropTarget(null);
-      setDropLine(null);
-      return;
-    }
-    const pointerY = pointerInRow(event);
     const rect = event.over?.rect;
-    if (pointerY === null || !rect) return;
-    const intent = resolveDropIntent(pointerY, rect.height, event.delta.x);
-    setDropTarget({ overId, intent });
-    // The line sits on the hovered row's own rule — one indent step in per level
-    // — and a child slot's is one step further in, where the new child's title
-    // will land.
-    const depth = event.over?.data.current?.depth;
-    const rule = rowRuleInset(typeof depth === "number" ? depth : 0);
-    const inset = intent === "child" ? ROW_INDENT_STEP : 0;
-    setDropLine({
-      top: rect.top + (intent === "before" ? 0 : rect.height),
-      left: rect.left + rule + inset,
-      width: Math.max(0, rect.right - (rect.left + rule + inset)),
-      child: intent === "child",
+    if (!overId || isProjectDropId(overId) || overId === activeId || !rect) return null;
+    const pointerY = pointerInRow(event);
+    if (pointerY === null) return null;
+
+    // A drop lands in the list the pointer is over, so that is the list whose
+    // levels clamp it — read back off the DOM, since only the rendered list
+    // knows which branches are expanded (`lib/visibleRows.ts`).
+    const listId = event.over?.data.current?.listId;
+    const rows = readVisibleRows(typeof listId === "string" ? document.getElementById(listId) : null);
+    const band = resolveDropBand(pointerY, rect.height);
+    const placement = planPlacement({
+      rows,
+      activeId,
+      overId,
+      band,
+      indentDelta: indentDeltaFromDrag(event.delta.x),
     });
+    if (!placement) return null;
+
+    // The line is drawn where the row will land: in the gap the band picked, and
+    // inset to the depth the drag has travelled to — so the level is visible
+    // before the drop, not only after it.
+    const left = rect.left + rowRuleInset(placement.depth);
+    return {
+      placement,
+      // A section only holds top-level rows (§5.9), so a nested landing has no
+      // column of its own — the core clears the field on the same write.
+      sectionId: placement.depth === 0 ? sectionForSlot(rows, overId) : null,
+      line: {
+        top: rect.top + (band === "before" ? 0 : rect.height),
+        left,
+        width: Math.max(0, rect.right - left),
+      },
+    };
+  };
+
+  /** Track the landing slot while the pointer moves, and draw its line. */
+  const trackDrop = (event: DragMoveEvent | DragOverEvent) => {
+    setDropLine(resolve(event)?.line ?? null);
   };
 
   const onDragOver = (event: DragOverEvent) => trackDrop(event);
@@ -163,95 +211,66 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
     const activeId = String(event.active.id);
     const overId = event.over ? String(event.over.id) : null;
     // Recompute at release: the last move may have landed between events.
-    const pointerY = pointerInRow(event);
-    const rect = event.over?.rect;
-    const intent: DropIntent =
-      pointerY !== null && rect ? resolveDropIntent(pointerY, rect.height, event.delta.x) : (dropTarget?.intent ?? "after");
+    const resolved = resolve(event);
+    const plan = resolved?.placement ?? null;
     clearDrag();
-    if (!overId || overId === activeId) return;
+    if (!overId) return;
 
     // Dropped on a project in the sidebar: move it there, appending to the end.
     if (isProjectDropId(overId)) {
-      const projectId = overId.slice("project:".length);
-      await api.taskMove(activeId, projectId, undefined, APPEND_SORT_ORDER);
-      qc.invalidateQueries({ queryKey: qk.tasksAll });
-      qc.invalidateQueries({ queryKey: qk.taskAll });
-      qc.invalidateQueries({ queryKey: qk.projects });
+      await api.taskMove(activeId, overId.slice("project:".length), undefined, APPEND_SORT_ORDER);
+      invalidate(true);
       return;
     }
-
-    // Pushed in past the row's indent: file it as that row's first child. A task
-    // can land under any visible row, however deep. `task_move` cannot change the
-    // parent (it only relocates between projects), so the parent goes through the
-    // patch, and the core then pulls the subtree into the parent's project.
-    // Landing *first* under the new parent is the rule here: the child slot is
-    // the bottom band pushed right, and the top band already means "before".
-    if (intent === "child") {
-      if (!findCachedTask(qc, overId)) return;
-      try {
-        await api.taskUpdate(activeId, { parent_id: overId, sort_order: 0 });
-      } catch {
-        // Refused by the core (the row is inside the dragged task's own
-        // subtree, or the branch would pass the depth cap): leave it alone.
-        return;
-      }
-      qc.invalidateQueries({ queryKey: qk.tasksAll });
-      qc.invalidateQueries({ queryKey: qk.subtasksAll });
-      qc.invalidateQueries({ queryKey: qk.taskAll });
-      qc.invalidateQueries({ queryKey: qk.projects });
-      return;
-    }
-
-    // Otherwise it lands *beside the hovered row*, sharing that row's parent.
-    // Landing beside a shallower row is how a subtask comes back out: dropped on
-    // a top-level row — or on its own parent row — it becomes a top-level task
-    // again instead of staying filed under its old parent. Within one group the
-    // parent does not change and this is a plain reorder.
-    const over = findCachedTask(qc, overId);
-    const active = findCachedTask(qc, activeId);
-    const group = findCachedSiblings(qc, overId);
-    if (!over || !active || !group) return;
-    const plan = planDrop({
-      activeId,
-      activeParent: active.parent_id ?? null,
-      overId,
-      overParent: over.parent_id ?? null,
-      groupIds: group.ids,
-      intent,
-    });
     if (!plan) return;
 
-    // Show the new order straight away; the refetch below confirms it. A subtask
-    // group is a subsequence of its branch cache, so only the group's own slots
-    // move. A task arriving from another group is not in that cache yet, so the
-    // optimistic pass skips it and the refetch places the row.
-    const reparented = plan.parent !== undefined;
-    const scope = group.scope === "tasks" ? qk.tasksAll : qk.subtasksAll;
-    qc.setQueriesData<CachedTasks>({ queryKey: scope }, (data) => {
+    const active = findCachedTask(qc, activeId);
+    // A row dragged in from a list the cache doesn't hold is reparented too, so
+    // the refetch places it rather than leaving it where it was.
+    const reparented = !active || (active.parent_id ?? null) !== plan.parent;
+
+    // Show the new order straight away; the refetch below confirms it. Only a
+    // group already whole in a cache can be rewritten in place — a row arriving
+    // from another group has no slot here yet, so the refetch places it.
+    const rewrite = (data: CachedTasks | undefined) => {
+      if (!data) return data;
       const items = cachedItems(data);
-      if (!items.some((t) => t.id === activeId)) return data;
+      const present = new Set(items.map((t) => t.id));
+      if (!plan.order.every((id) => present.has(id))) return data;
       const nextItems = reorderSubsequence(items, plan.order);
-      return Array.isArray(data) ? nextItems : data ? { ...data, items: nextItems } : data;
-    });
+      return Array.isArray(data) ? nextItems : { ...data, items: nextItems };
+    };
+    qc.setQueriesData<CachedTasks>({ queryKey: qk.tasksAll }, rewrite);
+    qc.setQueriesData<CachedTasks>({ queryKey: qk.subtasksAll }, rewrite);
+
+    // The section is part of the same placement: the drop line sits in a column
+    // as much as in a gap, so what it previews is what gets written.
+    const patch: TaskPatch = {};
+    if (reparented) {
+      patch.parent_id = plan.parent ?? undefined;
+      if (!plan.parent) patch.clear_parent_id = true;
+    }
+    // An unknown row — dragged in from a list this cache does not hold — is only
+    // ever *given* a section, never stripped of one, because the cache cannot say
+    // it had one. A row already known to be unfiled needs no write either.
+    const filed = active ? (active.section_id ?? null) : undefined;
+    if (plan.depth === 0 && filed !== resolved?.sectionId) {
+      if (resolved?.sectionId) patch.section_id = resolved.sectionId;
+      else if (filed === null) patch.clear_section_id = true;
+    }
 
     try {
-      if (reparented) {
-        await api.taskUpdate(
-          activeId,
-          plan.parent ? { parent_id: plan.parent } : { clear_parent_id: true },
-        );
-      }
+      // The parent and the section go first, so `task_reorder` ranks the row
+      // among its new siblings. `task_move` cannot change the parent — it only
+      // relocates between projects — so reparenting goes through the patch, and
+      // the core then pulls the subtree into the parent's project.
+      if (Object.keys(patch).length > 0) await api.taskUpdate(activeId, patch);
       await api.taskReorder(plan.order);
     } catch {
       // The core refused the move — into the task's own subtree, or past the
       // depth cap. The refetch below puts the row back where it came from.
     }
-    qc.invalidateQueries({ queryKey: qk.tasksAll });
-    qc.invalidateQueries({ queryKey: qk.subtasksAll });
-    if (reparented) {
-      qc.invalidateQueries({ queryKey: qk.taskAll });
-      qc.invalidateQueries({ queryKey: qk.projects });
-    }
+    invalidate(reparented);
   };
 
   return (
@@ -267,7 +286,7 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
       {children}
       {dropLine ? (
         <div
-          className={`drop-line${dropLine.child ? " is-child" : ""}`}
+          className="drop-line"
           style={{ top: dropLine.top, left: dropLine.left, width: dropLine.width }}
         />
       ) : null}

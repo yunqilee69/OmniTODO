@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import {
   Button,
   Checkbox,
@@ -63,6 +64,21 @@ export default function TaskDetail({
     enabled: Boolean(taskId),
   });
   const { data: projects } = useQuery({ queryKey: qk.projects, queryFn: () => api.projectList() });
+  // Sections belong to a project, so the picker only has anything to offer once
+  // the task is filed in one — and a subtask has no column of its own (§5.9).
+  const sectionProjectId = task?.project_id ?? "";
+  const { data: sections } = useQuery({
+    queryKey: qk.sections(sectionProjectId),
+    queryFn: () => api.sectionList(sectionProjectId),
+    enabled: Boolean(sectionProjectId),
+  });
+  const sectionOptions = useMemo(
+    () => [
+      { value: "", label: "无板块" },
+      ...(sections ?? []).map((s) => ({ value: s.id, label: s.name })),
+    ],
+    [sections],
+  );
 
   // New task selected → drop the stale description draft and close the add-subtask box.
   useEffect(() => {
@@ -174,13 +190,6 @@ export default function TaskDetail({
                 format={task.all_day ? "YYYY-MM-DD" : "YYYY-MM-DD HH:mm"}
               />
             </Field>
-            <Field label="全天">
-              <Switch
-                size="small"
-                checked={task.all_day}
-                onChange={(v) => commit({ all_day: v })}
-              />
-            </Field>
             <Field label="项目">
               <Select
                 style={{ width: "100%" }}
@@ -190,6 +199,33 @@ export default function TaskDetail({
                   { value: "", label: "收件箱" },
                   ...(projects ?? []).map((p) => ({ value: p.id, label: p.name })),
                 ]}
+              />
+            </Field>
+            <Field label="板块">
+              {/* Disabled rather than hidden for a subtask: the field exists and
+                  the reason it is closed is worth seeing. The core clears the
+                  section when a task gains a parent, so an empty box here is the
+                  truth, not a missing value. */}
+              <Select
+                style={{ width: "100%" }}
+                value={task.section_id ?? ""}
+                disabled={!task.project_id || Boolean(task.parent_id)}
+                placeholder={task.project_id ? "无板块" : "收件箱中的任务没有板块"}
+                onChange={(v) =>
+                  commit(v === "" ? { clear_section_id: true } : { section_id: v })
+                }
+                options={
+                  task.parent_id
+                    ? [{ value: "", label: "子任务跟随父任务" }]
+                    : sectionOptions
+                }
+              />
+            </Field>
+            <Field label="全天">
+              <Switch
+                size="small"
+                checked={task.all_day}
+                onChange={(v) => commit({ all_day: v })}
               />
             </Field>
           </div>

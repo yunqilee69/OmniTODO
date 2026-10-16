@@ -128,10 +128,26 @@ pub struct Project {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct Section {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub sort_order: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub deleted_at: Option<i64>,
+    pub version: i64,
+    pub device_id: Option<String>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
     pub project_id: Option<String>,
     pub parent_id: Option<String>,
+    /// The section this task sits in, or `None` for "no section". Only ever set
+    /// on a top-level task: a subtask's position is its parent's (design §5.9).
+    pub section_id: Option<String>,
     pub series_id: Option<String>,
     pub occurrence_at: Option<i64>,
     pub title: String,
@@ -196,6 +212,9 @@ pub struct TaskDto {
     pub id: Id,
     pub project_id: Option<Id>,
     pub parent_id: Option<Id>,
+    /// Section this top-level task belongs to; `None` is the "no section" group
+    /// the board shows as its last column and the list renders without a header.
+    pub section_id: Option<Id>,
     pub series_id: Option<Id>,
     pub occurrence_at: Option<i64>,
     pub title: String,
@@ -252,6 +271,7 @@ impl TaskDto {
             id: t.id.clone(),
             project_id: t.project_id.clone(),
             parent_id: t.parent_id.clone(),
+            section_id: t.section_id.clone(),
             series_id: t.series_id.clone(),
             occurrence_at: t.occurrence_at,
             title: t.title.clone(),
@@ -322,6 +342,35 @@ impl ProjectDto {
     }
 }
 
+/// A project's section (design §5.9) — the board view's column.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SectionDto {
+    pub id: Id,
+    pub project_id: Id,
+    pub name: String,
+    pub sort_order: i64,
+    /// Live top-level tasks filed under it, for the column header's count.
+    pub task_count: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub version: i64,
+}
+
+impl SectionDto {
+    pub fn from_section(s: &Section, task_count: i64) -> Self {
+        SectionDto {
+            id: s.id.clone(),
+            project_id: s.project_id.clone(),
+            name: s.name.clone(),
+            sort_order: s.sort_order,
+            task_count,
+            created_at: s.created_at,
+            updated_at: s.updated_at,
+            version: s.version,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagDto {
     pub id: Id,
@@ -382,6 +431,11 @@ pub struct CreateTaskInput {
     pub project_name: Option<String>,
     #[serde(default)]
     pub parent_id: Option<Id>,
+    /// Section inside `project_id`. Ignored for a subtask: only a top-level task
+    /// can be filed into a section, so `create_task` clears it when a parent is
+    /// given (design §5.9).
+    #[serde(default)]
+    pub section_id: Option<Id>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
@@ -428,6 +482,8 @@ pub struct TaskPatch {
     #[serde(default)]
     pub parent_id: Option<Id>,
     #[serde(default)]
+    pub section_id: Option<Id>,
+    #[serde(default)]
     pub start_at: Option<i64>,
     #[serde(default)]
     pub due_at: Option<i64>,
@@ -456,6 +512,10 @@ pub struct TaskPatch {
     /// `parent_id` unset, which means "don't touch the parent".
     #[serde(default)]
     pub clear_parent_id: bool,
+    /// Move the task into the project's "no section" group. Distinct from leaving
+    /// `section_id` unset, which means "don't touch the section".
+    #[serde(default)]
+    pub clear_section_id: bool,
     #[serde(default)]
     pub clear_start_at: bool,
     #[serde(default)]
@@ -505,9 +565,33 @@ pub struct ProjectPatch {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CreateSectionInput {
+    pub project_id: Id,
+    pub name: String,
+    #[serde(default)]
+    pub sort_order: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SectionPatch {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub sort_order: Option<i64>,
+    #[serde(default)]
+    pub expected_version: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskFilter {
     #[serde(default)]
     pub project_ids: Option<Vec<Id>>,
+    /// Sections to include. `unfiled_section` is what asks for the tasks in no
+    /// section at all; the two combine with OR when both are given.
+    #[serde(default)]
+    pub section_ids: Option<Vec<Id>>,
+    #[serde(default)]
+    pub unfiled_section: bool,
     #[serde(default)]
     pub tag_ids: Option<Vec<Id>>,
     #[serde(default)]

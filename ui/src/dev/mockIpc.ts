@@ -8,7 +8,15 @@
 //! It is reached only through `dev-preview.html`; the production `index.html`
 //! entry never imports it, so nothing here ships.
 
-import type { Page, Priority, ProjectDto, ProjectStats, TaskDto, TagDto } from "../api/client";
+import type {
+  Page,
+  Priority,
+  ProjectDto,
+  ProjectStats,
+  SectionDto,
+  TaskDto,
+  TagDto,
+} from "../api/client";
 
 const DAY = 86_400_000;
 /** All-day dates are civil dates (UTC midnight) — see `lib/dates.ts`. */
@@ -32,6 +40,7 @@ function makeTask(over: Partial<TaskDto> & Pick<TaskDto, "id" | "title">): TaskD
   return {
     project_id: null,
     parent_id: null,
+    section_id: null,
     series_id: null,
     occurrence_at: null,
     description: null,
@@ -107,6 +116,7 @@ let tasks: TaskDto[] = [
     project_id: "p-zhi",
     title: "知行开启多租户，智搭这边应该会出现问题，需要补充多租户能力",
     priority: "medium",
+    section_id: "s-now",
     sort_order: 1,
   }),
   makeTask({
@@ -122,6 +132,7 @@ let tasks: TaskDto[] = [
     project_id: "p-zhi",
     title: "新增对话接口，实现断线重连的效果。需要在对话列表支持显示输出状态。就是多任务切换的效果",
     priority: "low",
+    section_id: "s-now",
     sort_order: 3,
   }),
   makeTask({
@@ -135,7 +146,13 @@ let tasks: TaskDto[] = [
     tag_ids: [WORK],
     tags: ["工作"],
   }),
-  makeTask({ id: "t6", project_id: "p-zhi", title: "v5文档使用智搭知识库和悬浮球", sort_order: 5 }),
+  makeTask({
+    id: "t6",
+    project_id: "p-zhi",
+    title: "v5文档使用智搭知识库和悬浮球",
+    section_id: "s-next",
+    sort_order: 5,
+  }),
   makeTask({
     id: "t7",
     project_id: "p-zhi",
@@ -171,10 +188,34 @@ let tasks: TaskDto[] = [
     title: "补充灰度发布回滚脚本",
     status: "done",
     completed_at: SEEDED_AT + DAY,
+    section_id: "s-next",
     sort_order: 7,
   }),
   makeTask({ id: "t9", project_id: "p-zhong", title: "整理中保投数据接入清单", sort_order: 0 }),
   makeTask({ id: "t10", title: "把设计稿里的空状态补上" }),
+];
+
+let sections: SectionDto[] = [
+  {
+    id: "s-now",
+    project_id: "p-zhi",
+    name: "进行中",
+    sort_order: 0,
+    task_count: 0,
+    created_at: SEEDED_AT,
+    updated_at: SEEDED_AT,
+    version: 1,
+  },
+  {
+    id: "s-next",
+    project_id: "p-zhi",
+    name: "待排期",
+    sort_order: 1,
+    task_count: 0,
+    created_at: SEEDED_AT,
+    updated_at: SEEDED_AT,
+    version: 1,
+  },
 ];
 
 let tags: TagDto[] = [{ id: WORK, name: "工作", color: null, count: 2 }];
@@ -183,7 +224,18 @@ const settings = new Map<string, unknown>([
   ["ui.theme", "dark"],
   ["ui.project.show_completed", true],
   ["ui.project.sort", "manual"],
+  ["ui.project.view_mode", "board"],
 ]);
+
+/** Recompute each section's live top-level count, the way the core's
+ *  `section_task_count` does (subtasks belong to their parent's row). */
+function countSections(): void {
+  for (const section of sections) {
+    section.task_count = tasks.filter(
+      (t) => t.section_id === section.id && !t.parent_id,
+    ).length;
+  }
+}
 
 /** Recompute every row's branch fields from the parent links. */
 function rollUp(): void {
@@ -212,6 +264,7 @@ function rollUp(): void {
     t.subtask_done = done;
     t.subtask_total = total;
   }
+  countSections();
 }
 
 function subtreeIds(parentId: string): string[] {
@@ -226,6 +279,11 @@ function subtreeIds(parentId: string): string[] {
   };
   walk(parentId);
   return out;
+}
+
+/** Live top-level tasks filed in a section (the core's `section_task_count`). */
+function countOf(sectionId: string): number {
+  return tasks.filter((t) => t.section_id === sectionId && !t.parent_id).length;
 }
 
 function statsFor(projectId: string): ProjectStats {
@@ -248,6 +306,7 @@ const PATCHABLE = [
   "status",
   "project_id",
   "parent_id",
+  "section_id",
   "due_at",
   "start_at",
   "all_day",
@@ -265,6 +324,7 @@ function applyPatch(task: TaskDto, patch: Record<string, unknown>): void {
   const clears: [string, string][] = [
     ["clear_project_id", "project_id"],
     ["clear_parent_id", "parent_id"],
+    ["clear_section_id", "section_id"],
     ["clear_start_at", "start_at"],
     ["clear_due_at", "due_at"],
     ["clear_remind_at", "remind_at"],
@@ -293,12 +353,15 @@ function filterTasks(raw: Record<string, unknown> | undefined, text?: string): T
   const projectIds = f.project_ids as string[] | undefined;
   const statuses = f.statuses as string[] | undefined;
   const tagIds = f.tag_ids as string[] | undefined;
+  const sectionIds = f.section_ids as string[] | undefined;
   const needle = (text ?? (f.search_text as string | undefined))?.toLowerCase();
 
   let items = tasks.filter((t) => {
     if (!f.include_completed && isDone(t)) return false;
     if (projectIds?.length && !(t.project_id && projectIds.includes(t.project_id))) return false;
     if (f.unfiled === true && t.project_id) return false;
+    if (f.unfiled_section === true && t.section_id) return false;
+    if (sectionIds?.length && !(t.section_id && sectionIds.includes(t.section_id))) return false;
     if (f.root_only === true && t.parent_id) return false;
     if (f.parent_id != null && t.parent_id !== f.parent_id) return false;
     if (statuses?.length && !statuses.includes(t.status)) return false;
@@ -382,6 +445,8 @@ function buildHandlers(): Record<string, (args: Record<string, unknown>) => unkn
       description: (raw.description as string | null) ?? null,
       project_id: projectId,
       parent_id: parentId,
+      // Mirrors the core: a subtask has no column of its own (§5.9).
+      section_id: parentId ? null : ((raw.section_id as string | null) ?? null),
       priority: (raw.priority as Priority) ?? "none",
       status: (raw.status as TaskDto["status"]) ?? "todo",
       due_at: (raw.due_at as number | null) ?? null,
@@ -464,8 +529,16 @@ function buildHandlers(): Record<string, (args: Record<string, unknown>) => unkn
     task_move: ({ id, projectId, parentId, sortOrder }) => {
       const task = findTask(String(id));
       if (!task) throw new Error(`task ${id} not found`);
-      if (projectId !== undefined) task.project_id = projectId as string | null;
-      if (parentId !== undefined) task.parent_id = parentId as string | null;
+      // A move that changes the project or gives the task a parent leaves the
+      // old section behind — it describes a column of the project being left.
+      if (projectId !== undefined) {
+        if (projectId !== task.project_id) task.section_id = null;
+        task.project_id = projectId as string | null;
+      }
+      if (parentId !== undefined) {
+        if (parentId) task.section_id = null;
+        task.parent_id = parentId as string | null;
+      }
       if (sortOrder !== undefined) task.sort_order = Number(sortOrder);
       task.updated_at = Date.now();
       task.version += 1;
@@ -524,6 +597,7 @@ function buildHandlers(): Record<string, (args: Record<string, unknown>) => unkn
     },
     project_delete: ({ id }) => {
       projects = projects.filter((p) => p.id !== id);
+      sections = sections.filter((s) => s.project_id !== id);
       const doomed = tasks.filter((t) => t.project_id === id).map((t) => t.id);
       tasks = tasks.filter((t) => t.project_id !== id);
       return doomed.length;
@@ -536,6 +610,64 @@ function buildHandlers(): Record<string, (args: Record<string, unknown>) => unkn
       return null;
     },
     project_find_similar: () => [],
+
+    // ---- sections ----
+    section_list: ({ projectId }) =>
+      sections
+        .filter((s) => s.project_id === projectId)
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .map((s) => ({ ...s, task_count: countOf(s.id) })),
+    section_create: ({ input }) => {
+      const raw = (input ?? {}) as Record<string, unknown>;
+      const projectId = String(raw.project_id ?? "");
+      const section: SectionDto = {
+        id: newId("s-dev"),
+        project_id: projectId,
+        name: String(raw.name ?? "新板块"),
+        sort_order: sections.filter((s) => s.project_id === projectId).length,
+        task_count: 0,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+        version: 1,
+      };
+      sections = [...sections, section];
+      return section;
+    },
+    section_update: ({ id, patch }) => {
+      const section = sections.find((s) => s.id === id);
+      if (!section) throw new Error(`section ${id} not found`);
+      const raw = (patch ?? {}) as Record<string, unknown>;
+      if (raw.name !== undefined) section.name = String(raw.name);
+      if (raw.sort_order !== undefined) section.sort_order = Number(raw.sort_order);
+      section.updated_at = Date.now();
+      section.version += 1;
+      return section;
+    },
+    section_reorder: ({ ids }) => {
+      (ids as string[]).forEach((id, index) => {
+        const section = sections.find((s) => s.id === id);
+        if (section) section.sort_order = index;
+      });
+      return null;
+    },
+    section_delete: ({ id, deleteTasks }) => {
+      const doomed = tasks.filter((t) => t.section_id === id && !t.parent_id);
+      if (deleteTasks === true) {
+        const ids = new Set<string>();
+        for (const t of doomed) {
+          ids.add(t.id);
+          for (const child of subtreeIds(t.id)) ids.add(child);
+        }
+        tasks = tasks.filter((t) => !ids.has(t.id));
+        sections = sections.filter((s) => s.id !== id);
+        rollUp();
+        return ids.size;
+      }
+      for (const t of tasks) if (t.section_id === id) t.section_id = null;
+      sections = sections.filter((s) => s.id !== id);
+      rollUp();
+      return doomed.length;
+    },
 
     // ---- tags ----
     tag_list: () => tags,
@@ -562,7 +694,25 @@ function buildHandlers(): Record<string, (args: Record<string, unknown>) => unkn
     reminder_mark_fired: () => null,
     reminder_snooze: () => Date.now() + 600_000,
     materialize_due: () => 0,
-    calendar: () => [],
+    // Materialised occurrences only — the mock has no recurrence engine, so the
+    // virtual-occurrence half of the calendar is exercised against the core.
+    calendar: ({ from, to, projectId }) =>
+      tasks
+        .filter((t) => (projectId == null ? true : t.project_id === projectId))
+        .filter((t) => {
+          const at = t.due_at ?? t.start_at;
+          return at != null && at >= Number(from) && at <= Number(to);
+        })
+        .map((t) => ({
+          task_id: t.id,
+          series_id: t.series_id,
+          title: t.title,
+          start_at: t.start_at,
+          due_at: t.due_at,
+          all_day: t.all_day,
+          status: t.status,
+          virtual_occurrence: false,
+        })),
     report_summary: () => ({
       total: 0,
       open: 0,
@@ -632,6 +782,28 @@ function buildHandlers(): Record<string, (args: Record<string, unknown>) => unkn
       recurrence_rule: null,
       description: null,
     }),
+    // The panel hands over an already-parsed draft, so this only has to file it:
+    // the project the panel was opened for, or the draft's own `#project` by
+    // name. Without this the preview's quick-add silently did nothing, which
+    // also hid the calendar's click-to-create seed.
+    quickadd_commit: ({ draft, projectId }) => {
+      const raw = (draft ?? {}) as Record<string, unknown>;
+      const named = raw.project_name
+        ? projects.find(
+            (p) => p.name.toLowerCase() === String(raw.project_name).toLowerCase(),
+          )?.id
+        : undefined;
+      return makeFromInput({
+        title: raw.title,
+        description: raw.description ?? null,
+        project_id: (projectId as string | null) || named || null,
+        priority: raw.priority ?? "none",
+        due_at: raw.due_at ?? null,
+        start_at: raw.start_at ?? null,
+        all_day: Boolean(raw.all_day),
+        tag_names: raw.tag_names ?? [],
+      });
+    },
   };
 }
 

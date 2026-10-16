@@ -22,6 +22,18 @@ export const ROW_PADDING_LEFT = 12;
 export const ROW_INDENT_STEP = 20;
 export const ROW_GUTTERS = 48;
 
+/**
+ * Levels a task can be nested to, counting the top level as 1 — i.e. the
+ * deepest row sits at depth {@link MAX_TASK_DEPTH} - 1.
+ *
+ * The core enforces the same number (`ensure_parent`, DESIGN §5.5) and it is the
+ * cap the drop maths clamps to, so the drop line never promises a level the
+ * write would refuse. The core counts the *whole* branch a reparent drags along;
+ * the drop maths only sees the visible rows, so it clamps the landing row and
+ * lets the core refuse anything deeper.
+ */
+export const MAX_TASK_DEPTH = 5;
+
 /** Left padding of a row at `depth`. */
 export const rowPaddingLeft = (depth: number) => ROW_PADDING_LEFT + depth * ROW_INDENT_STEP;
 

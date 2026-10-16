@@ -13,6 +13,9 @@ export interface TaskDto {
   id: Id;
   project_id: Id | null;
   parent_id: Id | null;
+  /** The board column this task sits in, or `null` for "no section". Only ever
+   *  set on a top-level task: a subtask's place is its parent's row. */
+  section_id: Id | null;
   series_id: Id | null;
   occurrence_at: number | null;
   title: string;
@@ -65,6 +68,20 @@ export interface ProjectDto {
   stats: ProjectStats | null;
 }
 
+/** A project's section (design §5.9) — a divider in the list, a column on the
+ *  board. */
+export interface SectionDto {
+  id: Id;
+  project_id: Id;
+  name: string;
+  sort_order: number;
+  /** Live top-level tasks filed here; a subtask counts towards its parent. */
+  task_count: number;
+  created_at: number;
+  updated_at: number;
+  version: number;
+}
+
 export interface TagDto {
   id: Id;
   name: string;
@@ -96,6 +113,11 @@ export interface TaskFilter {
   root_only?: boolean;
   /** Only tasks with no project (the Inbox). */
   unfiled?: boolean;
+  /** Sections to include. Combine with `unfiled_section` for "these columns or
+   *  none of them" — the two OR together, never AND. */
+  section_ids?: Id[] | null;
+  /** Only tasks filed under no section (the board's trailing column). */
+  unfiled_section?: boolean;
   include_completed?: boolean;
   search_text?: string | null;
   sort?: Sort;
@@ -107,6 +129,8 @@ export interface CreateTaskInput {
   title: string;
   project_id?: Id | null;
   parent_id?: Id | null;
+  /** Ignored when `parent_id` is set: a subtask has no column of its own. */
+  section_id?: Id | null;
   description?: string | null;
   priority?: Priority | null;
   status?: Status | null;
@@ -130,6 +154,7 @@ export interface TaskPatch {
   status?: Status;
   project_id?: Id;
   parent_id?: Id;
+  section_id?: Id;
   due_at?: number;
   start_at?: number;
   all_day?: boolean;
@@ -144,6 +169,9 @@ export interface TaskPatch {
   clear_project_id?: boolean;
   /** Lift the task to the top level. Leaving `parent_id` unset keeps it. */
   clear_parent_id?: boolean;
+  /** Move the task into the project's "no section" group. Distinct from leaving
+   *  `section_id` unset, which means "don't touch the section". */
+  clear_section_id?: boolean;
   clear_start_at?: boolean;
   clear_due_at?: boolean;
   clear_remind_at?: boolean;
@@ -231,6 +259,19 @@ export interface AttachmentDto {
   created_at: number;
 }
 
+export interface CreateSectionInput {
+  project_id: Id;
+  name: string;
+  /** Defaults to the end of the project's columns. */
+  sort_order?: number | null;
+}
+
+export interface SectionPatch {
+  name?: string;
+  sort_order?: number;
+  expected_version?: number;
+}
+
 export interface ProjectPatch {
   name?: string;
   description?: string;
@@ -290,6 +331,18 @@ export const api = {
   projectDelete: (id: Id) => invoke<number>("project_delete", { id }),
   projectFindSimilar: (name: string) => invoke<ProjectDto[]>("project_find_similar", { name }),
 
+  // sections
+  sectionList: (projectId: Id) => invoke<SectionDto[]>("section_list", { projectId }),
+  sectionCreate: (input: CreateSectionInput) => invoke<SectionDto>("section_create", { input }),
+  sectionUpdate: (id: Id, patch: SectionPatch) =>
+    invoke<SectionDto>("section_update", { id, patch }),
+  sectionReorder: (ids: Id[]) => invoke<void>("section_reorder", { ids }),
+  /** `deleteTasks` takes the section's tasks with it (Todoist's behaviour);
+   *  the default releases them into "no section". Either way the number that
+   *  comes back is the tasks affected. */
+  sectionDelete: (id: Id, deleteTasks = false) =>
+    invoke<number>("section_delete", { id, deleteTasks }),
+
   // tags
   tagList: () => invoke<TagDto[]>("tag_list"),
   tagCreate: (name: string, color?: string) =>
@@ -332,7 +385,10 @@ export const api = {
 
   // report / settings / io / mcp
   reportSummary: (days = 30) => invoke<ReportSummary>("report_summary", { days }),
-  calendar: (from: number, to: number) => invoke<CalendarItemDto[]>("calendar", { from, to }),
+  /** `projectId` narrows the window to one project (the project view's calendar
+   *  mode); omitting it reads every project, the Inbox included. */
+  calendar: (from: number, to: number, projectId?: Id | null) =>
+    invoke<CalendarItemDto[]>("calendar", { from, to, projectId }),
   settingsGet: (key: string) => invoke<unknown>("settings_get", { key }),
   settingsSet: (key: string, value: unknown) => invoke<void>("settings_set", { key, value }),
   importRun: (content: string, format: ImportFormat) =>

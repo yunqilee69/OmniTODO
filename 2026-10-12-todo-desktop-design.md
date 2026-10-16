@@ -218,6 +218,7 @@ CREATE TABLE tasks (
   id                TEXT PRIMARY KEY,
   project_id        TEXT REFERENCES projects(id) ON DELETE SET NULL,
   parent_id         TEXT REFERENCES tasks(id)   ON DELETE CASCADE,  -- 子任务
+  section_id        TEXT REFERENCES sections(id) ON DELETE SET NULL, -- 板块（§5.9），仅顶层任务
   series_id         TEXT,                        -- 重复系列锚点（系列内共享）
   occurrence_at     INTEGER,                     -- 物化期次标识：该期应有的到期时刻；非重复任务为 NULL
   title             TEXT NOT NULL,
@@ -250,6 +251,24 @@ CREATE UNIQUE INDEX uq_tasks_series_occ ON tasks(series_id, occurrence_at)
   WHERE series_id IS NOT NULL AND occurrence_at IS NOT NULL;
 CREATE INDEX idx_tasks_due     ON tasks(due_at)  WHERE deleted_at IS NULL;
 CREATE INDEX idx_tasks_start   ON tasks(start_at) WHERE deleted_at IS NULL;
+CREATE INDEX idx_tasks_section ON tasks(section_id);
+
+-- 板块（§5.9）：项目内部的分栏，是看板的列、列表的分组标题
+CREATE TABLE sections (
+  id         TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER,
+  version    INTEGER NOT NULL DEFAULT 1,
+  device_id  TEXT
+);
+CREATE INDEX idx_sections_project ON sections(project_id, sort_order);
+-- 同一项目内板块名唯一（忽略大小写），软删除的行不参与
+CREATE UNIQUE INDEX uq_sections_name ON sections(project_id, name COLLATE NOCASE)
+  WHERE deleted_at IS NULL;
 
 -- 标签
 CREATE TABLE tags (
@@ -416,6 +435,28 @@ CREATE VIRTUAL TABLE tasks_fts USING fts5(
 - **FTS 重建**：`rebuild_fts` 全量重建 `tasks_fts`（仅在没有写入时执行），用于修复索引漂移。
 - **软删除实体物理清理**：可选，将 `deleted_at` 早于阈值（如 90 天）的行连同附件一起物理删除，控制库体积；默认关闭，避免误删。
 
+### 5.9 板块（Sections）
+
+板块是**项目内部的分栏**：它既是看板的一列，也是列表视图里的分组标题。它不是项目（不能有自己的标签、提醒、归档状态），也不是子任务（不嵌套）。Todoist 的 "section" 就是这个东西，本设计沿用其语义与交互，只有一处刻意分歧（见下）。
+
+**三条不变量**（都在服务层一处实现，不在各调用点重复判断）：
+
+1. **板块属于项目，只能收纳本项目的任务。** `create_section` / `update_section` 写入 `project_id` 时校验项目存在；`tasks.section_id` 指向的板块必须与任务的 `project_id` 相同（`ensure_section_in_project`）。任务的 `project_id` 变更（`task_move` 换项目、`reassign_project`）一律把 `section_id` 清空——旧板块不再适用，静默保留会让任务出现在别的项目的分栏里。
+2. **只有顶层任务带板块。** 子任务跟随父任务，行内没有自己的分栏位置：`parent_id` 一旦非空，`section_id` 被丢弃（创建、更新、移动三条路径都如此）。看板因此只渲染顶层任务，子任务的进度以 `子任务完成 n/m` 显示在卡片上。
+3. **删除板块默认不删任务。** 板块是分隔符，拆掉分隔符不该拆掉它分隔的内容。`section_delete(id, delete_tasks)` 有两种语义，UI 明确询问而不是默默选一个：
+   - `delete_tasks = false`（默认）：板块内任务的 `section_id` 置空，回到「无板块」，返回释放的任务数；
+   - `delete_tasks = true`（Todoist 的行为）：逐个删除板块内的顶层任务（各自级联删除子树），再软删板块。
+
+**排序**：`sections.sort_order` 是项目内独立的一列，板块拖动换位（`section_reorder`）只写这一列。
+
+**与 Todoist 的一处刻意分歧：任务序号的作用域。** Todoist 按 `(project_id, section_id, parent_id)` 给任务编号，`child_order` 在每个板块内从 0 重新开始。本项目**不这么做**：`tasks.sort_order` 仍是 `(project_id, parent_id)` 下的单一序号，板块只是一个过滤维度。理由是排序模式 `Sort::Manual` 与既有的拖拽排序都直接读这一列，改成按板块分段会让「同一项目内跨板块的全局手工顺序」这一概念消失，并让排序/拖拽两条路径各自需要一套解释。代价是：同一板块内的任务序号不连续（可能 3、4、5），这不影响显示顺序，也不影响拖拽（拖拽按可见行重排后整体重写序号）。
+
+**「无板块」列固定在最前**：列表渲染 `[null, ...sections]`，看板渲染 `[无板块, ...sections, 添加板块]`，与 Todoist 一致。无板块列没有拖动手柄、没有 `⋯` 菜单——它不是实体，不能被重命名、删除或换位。
+
+**折叠状态**：板块折叠与否是**客户端偏好**，存在 `settings` 的 `ui.sections.collapsed`（`{ [projectId]: sectionId[] }`），不落在 `sections` 行上。Todoist 把它作为 `is_collapsed` 存在服务端；本项目是单机本地库，没有跨端同步需求，放进 KV 可以避免为一个纯显示状态引入一个 DTO 字段和一次写库。
+
+**板块出现在哪里**：只有项目视图（含收件箱——它也是一个项目）。今天 / 即将到来 / 标签 / 搜索是跨项目的切片，没有分栏概念，因此不分组。
+
 ---
 
 ## 6. Rust 工作区结构
@@ -483,6 +524,7 @@ add_subtask(parent_id, input) -> TaskDto
 
 ```
 project_ids: Option<Vec<Id>>, tag_ids: Option<Vec<Id>>, tag_match: Any|All,
+section_ids: Option<Vec<Id>>, unfiled_section: bool,        -- §5.9
 priorities: Option<Vec<u8>>, statuses: Option<Vec<Status>>,
 due_before/due_after: Option<i64>, start_before/start_after: Option<i64>,
 has_attachments: Option<bool>, parent_id: Option<Id>,
@@ -495,6 +537,7 @@ limit: u32, offset: u32
 
 - **ProjectService**：`create/list(include_archived)/get(with_stats)/update/archive/reorder/delete`。`delete` 先按项目查出全部任务（含子树），再在**同一事务**内批量软删除任务及其标签关联/提醒/附件，最后软删项目（§5.7）。另提供 `find_similar(name)` 供快捷添加的选择框使用。
 - **TagService**：`list/create/rename/merge(from,to)/delete`；改名后触发受影响任务的 `tags_text` 与 FTS 刷新。
+- **SectionService**（§5.9）：`create/list(project_id)/get/update(name, sort_order)/reorder(ids)/delete(id, delete_tasks)`。`create`/`update` 校验项目内名称唯一（忽略大小写，`Conflict`）；`delete` 的两种语义见 §5.9；`ensure_section_in_project(section_id, project_id)` 是任务写路径共用的守卫。
 - **AttachmentService**：`add_blob(task_id, path)`（默认）、`add_managed(task_id, path)`、`list(task_id)`、`get_data(id)`、`open(id)`、`remove(id)`、`gc()`。两种模式文件均由应用托管，**无"引用失效 / 重新定位"语义**。
 - **SearchService**：`search(q, filter)`，内部走 FTS5 或 `LIKE` 回退，返回带高亮的 `TaskDto`。
 - **ReminderService**：`due_now(now) -> Vec<ReminderHit>`、`mark_fired(task_id, occurrence_at)`、`next_for(task) -> Option<i64>`、`catch_up(since) -> Vec<ReminderHit>`。
@@ -519,9 +562,12 @@ limit: u32, offset: u32
 task_create / task_update / task_get / task_list / task_complete /
 task_uncomplete / task_move / task_bulk_update / task_delete / task_add_subtask
 project_* / project_find_similar
+section_create / section_list / section_get / section_update / section_reorder
+  / section_delete
 tag_* / attachment_add_blob / attachment_add_managed / attachment_list
   / attachment_open / attachment_remove
 search_query / quickadd_parse / quickadd_commit
+calendar(from, to, project_id?)
 settings_get / settings_set
 mcp_status / mcp_http_start / mcp_http_stop / mcp_copy_client_config
 reminder_snooze / reminder_mark_fired
@@ -657,12 +703,13 @@ omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 | `get_task` | 单任务详情：子任务、标签、附件元数据、重复规则 |
 | `list_subtasks` | 指定任务的全部（递归）子任务。返回 `{items, count}` |
 | `list_tags` | 标签 + 使用计数。返回 `{items, count}` |
+| `list_sections` | 指定项目的板块 + 各自任务数。返回 `{items, count}` |
 | `search_tasks` | 全文检索（FTS5 / LIKE 回退）。过滤参数与 `list_tasks` 相同，默认同样只搜未完成 |
 | `list_upcoming` | 未来 N 天内未完成的开始/截止任务。返回 `{items, count}` |
 | `list_due_reminders` | 未来提醒计划（含重复展开）。返回 `{items, count}` |
 | `list_attachments` | 附件元数据（文件名、大小、sha256、blob/managed、托管路径；**不返回二进制**）。返回 `{items, count}` |
 | `summary_report` | §10 的聚合报告（**核心**） |
-| `list_calendar` | 窗口内的日历项（已物化任务 + 虚拟重复实例）。返回 `{items, count}` |
+| `list_calendar` | 窗口内的日历项（已物化任务 + 虚拟重复实例）。返回 `{items, count}`；可选 `project_id` 收窄到单个项目 |
 | `export_tasks` | 按过滤条件导出 JSON/CSV/Markdown（仅序列化，不落盘）。过滤与默认范围同 `list_tasks` |
 
 **过滤参数**（`list_tasks`/`search_tasks`/`export_tasks` 共用，扁平传入，不需要包进 `filter` 对象）：
@@ -684,7 +731,7 @@ omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 
 **写（`settings.mcp.write_enabled=true` 才注册；每次调用写 `mcp_audit`）**
 
-`create_task`、`update_task`、`complete_task`、`delete_task`(软删)、`add_subtask`、`add_tags`、`move_task`。
+`create_task`、`update_task`、`complete_task`、`delete_task`(软删)、`add_subtask`、`add_tags`、`move_task`、`create_section`、`update_section`、`delete_section`。
 
 > 写工具一律使用**精确字段**（`title`、`priority`、`due_at`、`project_id`、`parent_id`、`tag_ids`…），不接受简写语法字符串——简写解析（§12）只服务于本应用 UI，**不通过 MCP 暴露**。见 §12.5。
 >
@@ -766,9 +813,12 @@ omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 ### 13.1 视图
 
 - **Inbox / Today / Upcoming**：默认筛选的三条快捷入口。
-- **Calendar**：月/周视图，展示 `start_at`/`due_at`；未来重复期次为**虚拟展开（只读）**，已物化期次可拖拽改期。
-- **Project 视图**：左侧项目列表（含计数），右侧任务列表；支持拖拽移动。
-- **Tag 视图**：按标签横切。
+- **Calendar**：月/周视图，展示 `start_at`/`due_at`；未来重复期次为**虚拟展开（只读）**，已物化期次可拖拽改期。项目视图内的日历带上 `project_id`（§8.1），只显示该项目的期次。
+- **Project 视图**：左侧项目列表（含计数），右侧在**列表 / 看板 / 日历**三种模式间切换（选择存在 `ui.project.view_mode`）：
+  - **列表**：按板块分组的任务列表——`[无板块, ...板块]`，每组一个可折叠标题（名称 + 计数 + 悬停「＋」直接在该板块新建任务 + `⋯` 菜单：重命名 / 上移 / 下移 / 删除），末尾一行「添加板块」。
+  - **看板**：一列一个板块，列宽 286px，顺序为 `[无板块, ...板块, 添加板块]`；卡片只渲染顶层任务，显示日期、`#标签` 与子任务进度；列头为「名称 + 计数 + 拖动手柄 + `⋯`」，列脚为「添加任务」。
+  - **日历**：`CalendarBoard` 的嵌入式实例，按项目过滤。
+- **Tag 视图**：按标签横切（跨项目切片，不分组）。
 - **Search**：全文搜索 + 结果高亮。
 - **Settings**：
   - 通用：主题、默认项目、周起始日。
@@ -779,8 +829,10 @@ omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 ### 13.2 关键交互
 
 - 任务行内快速完成（乐观更新）、优先级/日期就地编辑。
-- 任务详情面板：Markdown 描述（textarea + 预览，v1 不引富文本编辑器）、子任务清单、标签选择、附件（**拖入即上传**，默认存库为 BLOB，可切托管文件；超限时提示）、重复规则编辑器。
+- 任务详情面板：Markdown 描述（textarea + 预览，v1 不引富文本编辑器）、子任务清单、标签选择、**板块选择**（顶层任务可选「无板块」或本项目任一板块；子任务该项禁用并显示「子任务跟随父任务」）、附件（**拖入即上传**，默认存库为 BLOB，可切托管文件；超限时提示）、重复规则编辑器。
 - `dnd-kit` 支持同列表排序与跨项目/跨父级拖拽。
+- **看板拖拽**（§5.9）：卡片可拖到同列的其他位置、拖到别的列的卡片之间、或拖到列体空白处（追加到该列末尾）。跨列落点写成两条命令，与 Todoist 一致——先 `task_update` 写 `section_id`，再 `task_reorder` 写新序号；列与列的换位走 `section_reorder`。看板自带一个嵌套的 `DndContext`：这里的落点同时决定「哪一列」和「哪个位置」，而应用级的落点解析是按任务行算的，在看板上这些行散落在各列里。碰撞检测按拖拽类型过滤候选，再取面积最小者——卡片因此胜过它所在的列体，列拖动也不会落进卡片列表。
+- **日历点选建任务**：点日期格的空白处打开快捷添加，并预填该日的**全天**截止日期；在项目日历里同时预填该项目（落库进该项目，而非收件箱），面板用 `#项目名` chip 把它显示出来。日期取自该格自己的分组键，所以任务必然落在被点的那一格。
 - 快捷添加：侧栏「添加任务」按钮或全局快捷键唤起一个**悬浮输入框**（左「＋」字段菜单 / 中任务名称 / 右「×」关闭，不含 AI 区）；「＋」菜单逐条列出简写字段并在右侧给出该字段的简写示例，点选即在光标处插入 token。使用 §12 简写语法并实时解析预览；`#项目` 歧义时弹选择框。回车落库，Esc / 点击面板外关闭。
 
 ### 13.3 Query key 约定（示例）
@@ -831,6 +883,7 @@ omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 | P4 | 全文搜索（FTS5）、导入导出 | 中文子串可搜；Markdown/Todoist 可导入 |
 | P5 | **MCP Server**：stdio + HTTP **同时可用**、只读工具 + `summary_report` | Cursor 与本地脚本可同时读到一致数据 |
 | P6 | MCP 写工具（受开关）+ 审计、打包分发、Releases 手动更新 | 三端安装包；写工具默认关闭 |
+| P7 | **追加（原计划外）**：板块（§5.9）、看板视图、项目视图的列表/看板/日历切换、项目内日历、任务详情弹窗的板块字段 | 板块可建/改名/换位/删除且两种删除语义都对；看板可换列与列内排序、列可换位；项目日历点选即在该日建任务并归入该项目 |
 
 ---
 
@@ -868,3 +921,7 @@ omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 13. 完成任务 = upsert `task_completions`（`task_id` 唯一），取消完成 = 删行，杜绝重复计数。
 14. `op_log` 保留 30 天、由维护任务裁剪；软删除实体的物理清理**默认关闭**（§5.8）。
 15. 重复期次逾期**不自动滚动**（保留历史与真实统计）。
+16. 删除板块**默认只释放任务**（回到「无板块」），不删任务；Todoist 那种"连任务一起删"作为对话框里的显式勾选项（§5.9）。
+17. 板块折叠状态存 `settings` 的 `ui.sections.collapsed`，不落到 `sections` 行上（§5.9）。
+18. 项目视图的列表/看板/日历选择存 `ui.project.view_mode`，默认 `list`。
+19. 项目内看板与列表共用同一条手工序号（`(project_id, parent_id)` 下的 `sort_order`），不按板块分段编号（§5.9 的分歧说明）。

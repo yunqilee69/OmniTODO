@@ -219,9 +219,10 @@
   }
 
   /* The drop line (Todoist-style). It is a fixed overlay rather than part of a
-     row, because the slot it marks sits *between* rows and shifts one indent
-     step right when the drop would file the task as a child. The dot is the
-     depth marker: level with a sibling's rule, or one step in for a child. */
+     row, because the slot it marks sits *between* rows and moves right as the
+     drag travels right — one indent step per level the drop would land at. The
+     dot is the depth marker: level with a sibling's rule, further in for a
+     deeper level. */
   .drop-line {
     position: fixed;
     z-index: 1000;
@@ -257,6 +258,18 @@
   }
   .composer-trigger:hover {
     color: var(--accent);
+  }
+
+  /* The board's variant of the same row sits in a column of cards rather than in
+     a list of lines, so hovering it fills like a card — the tint is what makes it
+     read as one more slot in that column. */
+  .composer-trigger--board {
+    transition:
+      color var(--t-instant) var(--ease-out),
+      background-color var(--t-instant) var(--ease-out);
+  }
+  .composer-trigger--board:hover {
+    background: var(--bg-hover);
   }
 
   /* The open composer box owns the border (§8.17), so its borderless fields

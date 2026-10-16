@@ -77,3 +77,19 @@ export function groupByDay<T>(
 export function daySpan(from: number, to: number): number {
   return Math.max(1, Math.ceil((to - from) / DAY_MS));
 }
+
+/**
+ * The due date a task created by clicking a calendar cell starts with.
+ *
+ * A cell is a date, not a time slot, so the seed is all-day — the honest reading
+ * of the grid, and Todoist's month grid seeds the same way. `cellDay` is the
+ * cell's local-midnight timestamp, which is also what the grid groups on, so the
+ * seed is exactly the cell's own bucket key: the task appears under the cell it
+ * was created from, by construction.
+ *
+ * Converting with `civilDate` instead — reading that local instant with UTC
+ * getters — lands a day early anywhere east of UTC.
+ */
+export function quickAddSeedForDay(cellDay: number): { due_at: number; all_day: true } {
+  return { due_at: civilOfDay(cellDay), all_day: true };
+}

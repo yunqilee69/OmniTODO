@@ -1,3 +1,98 @@
+## 2026-10-16 看板 / 日历 / 板块 / 任务详情弹窗（对照 Todoist 移植）
+
+四件互相关联的东西一起做，因为「板块」是另外三件的地基：Todoist 的看板列就是板块，
+列表视图按它分组，任务详情弹窗里它是任务的一个字段。
+
+- **板块（`crates/omnitodo-core/src/service/section.rs` + 迁移 `0002_sections.sql`）**：
+  项目内部的分栏。三条不变量在服务层一处实现（`ensure_section_in_project` 加任务写路径里的
+  派生逻辑），不在各调用点重复判断：板块只能收纳本项目的任务；只有顶层任务带板块（子任务跟随
+  父任务，`parent_id` 非空即丢弃 `section_id`）；删除板块默认只把任务释放回「无板块」，
+  Todoist 那种"连任务一起删"是对话框里的显式勾选项。项目内板块名唯一（忽略大小写，软删除行不参与）。
+- **与 Todoist 的一处刻意分歧**：Todoist 按 `(project_id, section_id, parent_id)` 给任务编号，
+  每个板块内从 0 重排；本项目保留 `(project_id, parent_id)` 下的单一 `sort_order`。理由是
+  `Sort::Manual` 与既有拖拽排序都直接读这一列，改成按板块分段会让"项目内跨板块的手工顺序"
+  这个概念消失。代价是同一板块内的序号不连续，不影响显示与拖拽。理由写在设计 §5.9。
+- **看板视图（`ui/src/components/BoardView.tsx`）**：列宽 286px，顺序 `[无板块, ...板块, 添加板块]`；
+  列头是「名称 + 计数 + 拖动手柄 + ⋯」，列脚是「添加任务」（不在列头）；列体整段都是落点，
+  空列留 1px 占位否则测不到尺寸。跨列落点写两条命令（先 `task_update` 写 `section_id`，
+  再 `task_reorder` 写序号），与 Todoist 的 `item_move` + `item_reorder` 一致。看板自带嵌套
+  `DndContext`：这里的落点同时决定"哪一列"和"哪个位置"，而应用级解析是按任务行算的。
+  碰撞检测按拖拽类型过滤候选再取面积最小者，卡片因此胜过它所在的列体。
+- **列表按板块分组（`ui/src/components/SectionHeader.tsx` + `ui/src/lib/sections.ts`）**：
+  `[无板块, ...板块]`，标题行可折叠、可双击就地重命名、悬停 `＋` 直接在该板块新建任务，
+  `⋯` 菜单给重命名 / 上移 / 下移 / 删除。板块换位在列表里走菜单而不是拖动手柄——应用级拖拽
+  上下文是"任务"形状的，同一片区域不该有两种落点解释。折叠状态存 `settings` 的
+  `ui.sections.collapsed`（纯客户端偏好，不落到 `sections` 行上）。
+- **项目视图三种模式**：列表 / 看板 / 日历，分段控件切换，选择存 `ui.project.view_mode`。
+- **项目内日历**：`calendar` 命令加可选 `project_id`；`CalendarBoard` 以 `embedded` 模式复用，
+  点日期格空白处直接在该日建任务（预填全天日期，项目日历里同时预填该项目）。
+- **任务详情弹窗的「板块」字段**：顶层任务可选「无板块」或本项目任一板块；子任务该项禁用并显示
+  「子任务跟随父任务」。
+- **MCP**：只读加 `list_sections`，写入加 `create_section` / `update_section` / `delete_section`，
+  `list_calendar` 加可选 `project_id`。
+
+### 浏览器真拖拽 / 真点击验收发现并修掉的两个缺陷
+
+两个都是"静默无效"型——动作走完了、没报错、就是没效果：
+
+1. **看板板块拖动完全没反应**。列的 sortable 节点 id 是 `section:<id>`，列体 droppable 的 id 是
+   `column:<key>`，两者共用同一个 `useSortable`/`useDroppable` 命名空间但只有前者带
+   `kind: "column"`，所以碰撞永远落在 `section:<id>` 上；而 `onDragEnd` 只认 `column:` 前缀，
+   于是拿到 `null` 直接 return。同一个前缀假设还让"卡片拖到另一张卡片上"失效：卡片注册用的是
+   任务 id 本身，代码却在 `slice("card:".length)`。修法是把两个命名空间的解码收成显式助手
+   （`sectionOfColumnId`，卡片 id 就是任务 id），并在 `boardCollision` 里过滤掉 active 自己。
+   回归用例 `ui/src/components/BoardView.test.tsx`。
+2. **日历点日期格建任务会早一天**。格的 `day` 是本地零点时间戳，`onCreate` 却用
+   `civilDate`（UTC getter）去换算，UTC 以东会落到前一天；而同一格的分组键用的是
+   `civilOfDay`，拖拽改期也一直用 `civilOfDay`。现在种子直接取该格自己的分组键
+   （`quickAddSeedForDay`），任务必然落在被点的那一格。回归用例在 `ui/src/lib/calendar.test.ts`。
+
+顺带补了预览桩的两处缺口（只影响 `dev-preview.html`，不影响产品）：桩里根本没有
+`quickadd_commit` 处理器，而桩对未注册命令是"返回 null"而不是报错，所以预览里回车建任务
+一直静默失败——这正好掩盖了上面第 2 条的验收；另外项目日历建的任务此前会落到收件箱而不是
+该项目，现在随种子带上 `project_id`，并用 `#项目名` chip 显示出来（否则这个去向既看不见也改不了）。
+
+验证：`cargo test --workspace` **56 passed / 0 failed**（core 46 + mcp 10）；`cd ui && npx tsc --noEmit`
+干净；`cd ui && npx vitest run` **157 passed / 20 文件**；`cd ui && npm run build` 成功。
+真浏览器验收在 `http://localhost:5173/dev-preview.html`（stub IPC）上用真实指针事件跑完：
+卡片从「无板块」拖进「进行中」后读回 `section_id=s-now` 且序号追加到该列末尾、板块计数 2→3；
+卡片拖到另一列某张卡片的上半区 → 读回落在该卡片之前；列内卡片上移一位 → 序号重排；
+拖动列头手柄 → `section_reorder` 生效且 DOM 列序同步变成 `[无板块, 待排期, 进行中]`；
+列表模式渲染出「无板块(4) / 进行中(2) / 待排期(2)」三组标题，收起「进行中」后两行消失且
+`settings.ui.sections.collapsed` 写入 `{"p-zhi":["s-now"]}`，新建板块重名被拒、换名后建出
+「设计评审(0)」；详情弹窗的「板块」读作「进行中」、改成「待排期」后读回 `s-next` 且计数跟随、
+改回「无板块」后读回 `null`，子任务那一项禁用并显示「子任务跟随父任务」；项目日历只显示本项目的
+期次（给另一项目的任务加日期后，全局日历多出一条而项目日历不变），点 10/23 建出的任务
+`due_at=2026-10-23T00:00:00Z`、`all_day=true`、`project_id=p-zhi`，全局日历点 10/24 建出的任务
+落收件箱且没有 `#项目` chip。
+
+### 看板列脚的「添加任务」重做
+
+看板能用之后暴露的观感问题：列脚的添加任务是"一枚按钮"，展开后是"一个小输入框"，
+两者都不像它旁边那些卡片，也不像列表视图里同一个动作的样子。对着 Todoist 的看板结构
+（`board_section__footer` 只有一个槽位，收起时是触发钮、展开时是编辑器，二者互斥）改了三处：
+
+- **收起态**从 antd `Button type="text" size="small"` 换成列内的行（`.composer-trigger--board`）：
+  `px-2 py-1.5`、圆角与卡片一致、左缘与上方卡片的复选框列对齐；悬停除文字变 `--accent`
+  再铺一层 `--bg-hover`——它坐在一列卡片中间，该像卡片那样响应悬停。
+- **展开态**从 `Input size="small"` 换成卡片形的 `composer-box`：`--bg-surface` +
+  `1px --border-strong` + `--e1`，两行无边框输入（任务名称 / 描述），底部分隔线以下是
+  板块 chip（`# 名称`；无板块列不放 chip，"无板块"不是名字）+ `×` 收起。比列表 composer
+  少优先级与日期 chip：286px 的列放不下。键盘与列表一致（`Enter` 落库并留框继续下一条、
+  `Esc` 收起、两行都空时失焦收起）。顺带把描述也接进了 `task_create`。
+- **末尾「添加板块」**从"一枚通栏按钮"换成"一根列"：同宽、通高、同圆角，虚线
+  `--border-strong` 且不铺底。它此前是浮在列外的按钮，读起来不像"这里将出现一列"。
+
+验证：`cd ui && npx tsc --noEmit` 干净、`npx vitest run` **157 passed / 20 文件**、
+`npm run build` 成功（本轮只动前端，未改 Rust）。浏览器里在 `dev-preview.html` 的看板模式
+读两种状态的**计算样式**核对：收起态 268×33、`padding 6px 8px`、圆角 6px 与卡片一致、
+左缘与卡片左缘偏移 0；展开态 268×112、`--bg-surface` + `1px --border-strong`（`rgb(61,57,51)`）
++ `--e1`、两个无边框输入、chip 读作 `# 进行中`；添加板块列 286×620 与相邻列等高、`1px dashed`。
+行为上：在「待排期」列脚输入标题与描述后回车 → 卡片落在该列（不是无板块）、描述跟随、
+输入框留开且已清空；在「无板块」列脚同样操作 → 卡片落在无板块列、框内不出现 chip。
+（本机 IAB 渲染器在窗口失焦时不产生动画帧，Playwright 的 `click()` 可及性等待必然超时，
+所以点击与输入都在页面内派发事件完成。）
+
 ## 2026-10-15 MCP 工具返回形状与过滤入参修复
 
 装上包实测 MCP 后反馈的一组问题，根因都是工具层没把调用方当外人：
@@ -70,10 +165,10 @@
 
 | 命令 | 结果 |
 |---|---|
-| `cargo test --workspace` | **38 passed / 0 failed**（core 31 + mcp 7） |
+| `cargo test --workspace` | **56 passed / 0 failed**（core 46 + mcp 10，见最新一轮记录） |
 | `cargo clippy --workspace --all-targets` | 0 warning |
 | `cargo clippy -p omnitodo-desktop --all-targets` | 0 warning（在 `rust:1-trixie` 容器内，见 `scripts/package-linux-docker.sh`） |
-| `cd ui && npm test` | **64 passed / 10 文件**（vitest） |
+| `cd ui && npm test` | **157 passed / 20 文件**（vitest） |
 | `cd ui && npm run build` | `tsc --noEmit`（strict + `noUnusedLocals`）+ `vite build` 成功 |
 | `scripts/smoke-gui-xvfb.sh` | **15 张页面截图 + 5 项数据库/像素断言通过**（见下） |
 | `scripts/smoke-notification-xvfb.sh` | **系统通知真弹出**：dunst 收到带任务标题的通知、恰好一条、气泡区域像素变化（见下） |
@@ -174,13 +269,15 @@ macOS 上 `omnitodo://` 由 `Info.plist` 的 `CFBundleURLSchemes` 注册（与 L
 [`DESIGN.md`](../DESIGN.md) 通过 `ConfigProvider` 的 `theme` 令牌注入（`ui/src/theme/antd.ts`），
 明/暗/跟随系统三态同时驱动 antd 算法与自留 CSS 变量。两处刻意保留自绘：日历网格
 （antd `Calendar` 无法承载跨格拖拽改期）与列表容器 `<ul>`（antd `List` 会丢 dnd-kit 排序与
-`@tanstack/react-virtual` 开窗）。验证：`npm run build` + `npm test`（69/69）通过，并用无头
-Chrome 渲染真实页面逐一核对了 Inbox（明/暗）、详情抽屉、日历、快速添加、项目/标签视图、设置。
+`@tanstack/react-virtual` 开窗）。验证：`npm run build` + `npm test` 通过（此后随各轮功能扩展，
+当前 157/157），并用无头 Chrome 渲染真实页面逐一核对了 Inbox（明/暗）、详情抽屉、日历、
+快速添加、项目/标签视图、设置。
 
 ⚠️ **待复跑**：`scripts/smoke-gui-xvfb.sh` 用**硬编码坐标**点击（`ROW_Y`/`NAV_Y_*`/`PANEL_CLOSE_*` 等，
 见该脚本第 109–129 行），antd 改版后侧栏 Menu、行高、抽屉位置都已变化，这些常量需要按新布局
 重新标定；本机（macOS）无 X11/Xvfb，未能在此复跑，故上表 P1–P4 的页面级冒烟证据仍是改版**之前**
-那一轮的结果。
+那一轮的结果。2026-10-16 加入的「列表 / 看板 / 日历」切换控件落在项目页页头右侧，列表模式的
+行位置因此整体下移了一点，标定常量时一并核对。
 
 ## 与设计的两处实现偏差
 
@@ -308,13 +405,31 @@ Chrome 渲染真实页面逐一核对了 Inbox（明/暗）、详情抽屉、日
   页面渲染与 deep-link 已在 macOS 真机验证（见上「真实桌面冒烟（macOS）」），
   但托盘右键菜单与 dnd-kit 的 pointer 事件序列仍需人手过一遍；autostart 写入开机项后的
   重启验证同样如此。Windows 上 deep-link 的系统级注册与单实例转发也建议在真机再确认一次。
-- **拖拽的层级落点（本轮改动，未用真实 pointer 验证）**：落点语义已从「只能在
-  原兄弟组内排序」改为「跟随**悬停行**的父级」——拖到上/下半带＝落在该行旁边并继承它的
-  父级（子任务拖到顶层行或自己父行旁边即升回上一层），往右推一格＝成为它的第一个子任务。
-  决策是纯函数 `planDrop`（`ui/src/lib/nestDrop.ts`，含单测），写入沿用 core 早已支持的
-  `task_update {clear_parent_id}`。本机无头环境**投递不了可信 pointer 序列**（实测
-  `pointerdown` 计数为 0），所以只验到：预览后端里 `clear_parent_id` 后子任务确实出现在
-  顶层列表、子树跟随，以及页面渲染无异常；真人拖一次仍是必须的一步。
+- **拖拽的层级落点（本轮改动，已在浏览器里用真实 pointer 事件验证，未在打包后的桌面应用里人手拖过）**：
+  落点语义已改成 **Todoist 式**——指针的垂直位置只选**间隙**（悬停行上半带＝落在它前面，下半带＝
+  落在它后面），水平位移只定**层级**（每 20px 一格，`round(dx / ROW_INDENT_STEP)`，所以一次
+  拖拽就能跨多层，而不是一层一次）；层级再被相邻行夹紧（不得比上一行深一层以上、不得比下一行浅），
+  最后**由层级推导父级**。拖到顶层行旁边即升回上一层，往右推一格即成为上一行的第一个子任务——
+  「拖进去」和「拖出来」因此是同一条规则的两个方向。算法与常量对齐逆向分析得到的 Todoist web
+  实现（`getTaskPlacement`：`round(dx/28)` 后夹紧到 `[next, min(prev + 1, 5)]`）；OmniTODO 的
+  缩进步长是 20px（`ROW_INDENT_STEP`），深度上限 5（`lib/layout.ts` 的 `MAX_TASK_DEPTH`，与 core
+  `ensure_parent` 的上限一致）。决策是纯函数 `planPlacement`（`ui/src/lib/nestDrop.ts`，21 条单测，
+  含"一次跨两层"、"夹紧到上限/下限"、"拒绝落进自己的子树"）；可见行由 `lib/visibleRows.ts` 在落点
+  时刻从渲染出的 `<ul>` 上读回（哪些分支展开只有 DOM 知道，5 条单测）。写入沿用 core 早已支持的
+  `task_update {parent_id | clear_parent_id}`（仅重挂父级时才写）再 `task_reorder(order)`。
+  **已验**：`tsc --noEmit` + `vite build` + 全部测试文件全绿；并在 `dev-preview.html`
+  （mock IPC）里用真实 pointer 事件跑通了四次完整拖拽——同级重排、往右推一格收为子任务
+  （写 `parent_id` + `sort_order`）、往左拉回顶层（写 `clear_parent_id`）、以及**一次 40px 位移
+  直接下潜两层**（成为孙任务）；每次落点线的缩进（`left` = `rowRuleInset(depth)`）与松手后
+  实际写入的父级完全一致，控制台无报错。**未验**：打包后的桌面应用里人手拖一次——本机的
+  `cua.drag` 只投递 move 事件、不投递按下/松开（实测 `pointerdown` 计数为 0），所以浏览器里的
+  手势是由页面内派发的 pointer 序列驱动的，走的是同一套 React/dnd-kit 代码路径，但毕竟不是真人鼠标。
+- **看板 / 板块 / 日历的拖拽（2026-10-16）**：同上，已在 `dev-preview.html` 里用页面内派发的
+  pointer 序列验证（跨列换卡写 `section_id`、卡片落到另一张卡片的上半区即插到它之前、列内重排、
+  列头手柄换位），**未在打包后的桌面应用里人手拖过**。同一轮还发现：这个环境里的 IAB 标签页
+  一旦窗口失焦就不再产生动画帧（`requestAnimationFrame` 永不回调），Playwright 的
+  actionability 检查因此永远等不到"稳定"，`click()` 一律超时——所以本轮的点选是用页面内
+  派发的 `click` 驱动的，不是 `tab.playwright.click()`。这是环境限制，不是应用行为。
 
 ### B. 本机做不了，但已把能验证的部分都验了
 

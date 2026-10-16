@@ -4,6 +4,10 @@ export const qk = {
   project: (id: string) => ["project", id] as const,
   /** Every single-project query (`project_update` moves the header's stats). */
   projectAll: ["project"] as const,
+  sections: (projectId: string) => ["sections", projectId] as const,
+  /** Every section list: a section write moves one project's board columns and
+   *  list headers, and a task write moves their counts. */
+  sectionsAll: ["sections"] as const,
   tasks: (filter: unknown) => ["tasks", filter] as const,
   tasksAll: ["tasks"] as const,
   task: (id: string) => ["task", id] as const,

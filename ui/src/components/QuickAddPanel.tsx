@@ -12,7 +12,15 @@ import {
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Select, Tag, Tooltip, type InputRef } from "antd";
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
 import { useUiStore } from "../stores/ui";
@@ -65,16 +73,45 @@ export default function QuickAddPanel() {
   const inputRef = useRef<InputRef>(null);
   const qc = useQueryClient();
 
-  const { data: draft } = useQuery({
+  const seed = useUiStore((s) => s.quickAddSeed);
+
+  // The name behind the seeded project, for the chip that shows where the task
+  // will land. Only fetched while such a seed is live.
+  const { data: projects } = useQuery({
+    queryKey: qk.projects,
+    queryFn: () => api.projectList(),
+    enabled: Boolean(seed?.project_id),
+  });
+  const seedProject = seed?.project_id
+    ? projects?.find((p) => p.id === seed.project_id)
+    : undefined;
+
+  const { data: parsed } = useQuery({
     queryKey: ["quickadd", text],
     queryFn: () => api.quickaddParse(text),
     enabled: open && text.trim().length > 0,
   });
 
+  /**
+   * What the panel shows and files. A seed (the calendar's day cell) supplies a
+   * date only when the typed shorthand does not: typing `^明天` on a seeded panel
+   * has to win, or the click would silently override what the user just said.
+   */
+  const draft = useMemo(() => {
+    if (!parsed) return parsed;
+    if (!seed || parsed.due_at != null) return parsed;
+    return { ...parsed, due_at: seed.due_at, all_day: seed.all_day };
+  }, [parsed, seed]);
+
   const commit = useMutation({
     mutationFn: async () => {
       if (!draft) throw new Error("nothing to add");
+      // The picker resolves an ambiguous `#name`, so it outranks everything. Next
+      // is the project the panel was opened from — a project's calendar files its
+      // new tasks there, the way that project's own composer does. Last is the
+      // line itself: a typed `#project` is left for the command to resolve.
       let project = projectId || undefined;
+      if (!project && !draft.project_name) project = seed?.project_id || undefined;
       if (projectId === NEW_PROJECT && draft.project_name) {
         const created = await api.projectCreate(draft.project_name);
         project = created.id;
@@ -142,6 +179,10 @@ export default function QuickAddPanel() {
   const chips: string[] = [];
   if (draft?.priority && draft.priority !== "none") chips.push(`!${draft.priority}`);
   if (draft?.project_name) chips.push(`#${draft.project_name}`);
+  // A project seeded by the calendar files the task just as surely as a typed
+  // `#project` does, so it gets a chip too — otherwise the destination would be
+  // invisible and unchangeable.
+  else if (seedProject) chips.push(`#${seedProject.name}`);
   for (const t of draft?.tag_names ?? []) chips.push(`@${t}`);
   if (draft?.start_at) chips.push(`>${new Date(draft.start_at).toLocaleString()}`);
   if (draft?.due_at) chips.push(`^${new Date(draft.due_at).toLocaleString()}`);

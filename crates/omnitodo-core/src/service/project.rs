@@ -225,6 +225,20 @@ impl Core {
         .execute(&mut *tx)
         .await?;
 
+        // The project's sections go with it (§5.9). The tasks above keep their
+        // `section_id` pointing at a row that is now deleted, which is harmless:
+        // every read filters `deleted_at IS NULL` on both sides, and a task whose
+        // section is missing from the live list reads as "no section".
+        sqlx::query(
+            "UPDATE sections SET deleted_at = ?, updated_at = ?, version = version + 1 \
+             WHERE project_id = ? AND deleted_at IS NULL",
+        )
+        .bind(ts)
+        .bind(ts)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
         tx.commit().await?;
 
         self.op_log(

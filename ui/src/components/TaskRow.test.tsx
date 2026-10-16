@@ -9,6 +9,7 @@ function task(over: Partial<TaskDto> = {}): TaskDto {
     id: "t1",
     project_id: null,
     parent_id: null,
+    section_id: null,
     series_id: null,
     occurrence_at: null,
     title: "写周报",

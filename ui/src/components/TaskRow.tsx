@@ -66,6 +66,10 @@ export interface TaskRowProps {
   index?: number;
   /** Set by the windowed list so the virtualizer can measure the real height. */
   dataIndex?: number;
+  /** Extra `data-*` attributes for the row element, published by the sortable
+   *  wrapper so the drag layer can read the visible list back off the DOM
+   *  (`lib/visibleRows.ts`). */
+  domAttrs?: Record<string, string>;
 }
 
 /**
@@ -99,6 +103,7 @@ export default function TaskRow({
   animateIn = false,
   index = 0,
   dataIndex,
+  domAttrs,
 }: TaskRowProps) {
   const [dueOpen, setDueOpen] = useState(false);
   const done = task.status === "done" || task.status === "cancelled";
@@ -206,6 +211,7 @@ export default function TaskRow({
     <li
       ref={innerRef}
       data-index={dataIndex}
+      {...domAttrs}
       style={{
         paddingLeft: gutters ? `${rowPaddingLeft(depth)}px` : 0,
         // Read by the shared `.task-panel` rule that draws the hairline above

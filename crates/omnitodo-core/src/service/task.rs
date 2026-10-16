@@ -32,6 +32,18 @@ impl Core {
         if let Some(parent) = &input.parent_id {
             self.ensure_task_exists(parent).await?;
         }
+        // Only a top-level task has a column of its own (§5.9); a subtask sits in
+        // its parent's row. Quick-add paths fill in both fields without knowing
+        // the rule, so a section named next to a parent is dropped, not rejected.
+        let section_id = if input.parent_id.is_some() {
+            None
+        } else {
+            if let Some(sid) = &input.section_id {
+                self.ensure_section_in_project(sid, input.project_id.as_deref())
+                    .await?;
+            }
+            input.section_id.clone()
+        };
 
         let due_at = input.due_at;
         let start_at = input.start_at;
@@ -58,15 +70,16 @@ impl Core {
         let status = input.status.unwrap_or(Status::Todo);
 
         sqlx::query(
-            "INSERT INTO tasks (id, project_id, parent_id, series_id, occurrence_at, title, \
-             description, priority, status, start_at, due_at, all_day, timezone, remind_enabled, \
-             remind_at, remind_offset_min, recurrence_rule, recurrence_until, tags_text, \
-             sort_order, created_at, updated_at, version, device_id) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, 1, ?)",
+            "INSERT INTO tasks (id, project_id, parent_id, section_id, series_id, occurrence_at, \
+             title, description, priority, status, start_at, due_at, all_day, timezone, \
+             remind_enabled, remind_at, remind_offset_min, recurrence_rule, recurrence_until, \
+             tags_text, sort_order, created_at, updated_at, version, device_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, 1, ?)",
         )
         .bind(&id)
         .bind(&input.project_id)
         .bind(&input.parent_id)
+        .bind(&section_id)
         .bind(&series_id)
         .bind(occurrence_at)
         .bind(&title)
@@ -114,7 +127,7 @@ impl Core {
         Ok(row.0)
     }
 
-    async fn ensure_project_exists(&self, id: &Id) -> Result<()> {
+    pub(crate) async fn ensure_project_exists(&self, id: &Id) -> Result<()> {
         let row: Option<(String,)> =
             sqlx::query_as("SELECT id FROM projects WHERE id = ? AND deleted_at IS NULL")
                 .bind(id)
@@ -272,6 +285,19 @@ impl Core {
         } else {
             current.parent_id.clone()
         };
+        // A section is a property of a top-level task inside one project, so it is
+        // *derived* rather than copied: moving to another project or under a parent
+        // invalidates it, because the old section no longer describes this row
+        // (§5.9). Only a deliberate `section_id` on a still-top-level task survives.
+        let section_id = if patch.clear_section_id || parent_id.is_some() || project_id != current.project_id {
+            None
+        } else {
+            let next = pick(patch.section_id, &current.section_id);
+            if let Some(sid) = &next {
+                self.ensure_section_in_project(sid, project_id.as_deref()).await?;
+            }
+            next
+        };
         let start_at = if patch.clear_start_at {
             None
         } else {
@@ -333,14 +359,16 @@ impl Core {
         }
 
         sqlx::query(
-            "UPDATE tasks SET project_id = ?, parent_id = ?, series_id = ?, occurrence_at = ?, \
-             title = ?, description = ?, priority = ?, status = ?, completed_at = ?, start_at = ?, \
-             due_at = ?, all_day = ?, timezone = ?, remind_enabled = ?, remind_at = ?, \
-             remind_offset_min = ?, recurrence_rule = ?, recurrence_until = ?, sort_order = ?, \
-             updated_at = ?, version = version + 1 WHERE id = ?",
+            "UPDATE tasks SET project_id = ?, parent_id = ?, section_id = ?, series_id = ?, \
+             occurrence_at = ?, title = ?, description = ?, priority = ?, status = ?, \
+             completed_at = ?, start_at = ?, due_at = ?, all_day = ?, timezone = ?, \
+             remind_enabled = ?, remind_at = ?, remind_offset_min = ?, recurrence_rule = ?, \
+             recurrence_until = ?, sort_order = ?, updated_at = ?, version = version + 1 \
+             WHERE id = ?",
         )
         .bind(&project_id)
         .bind(&parent_id)
+        .bind(&section_id)
         .bind(&series_id)
         .bind(occurrence_at)
         .bind(&title)
@@ -490,12 +518,20 @@ impl Core {
             None => current.parent_id.clone(),
         };
         let order = sort_order.unwrap_or(current.sort_order);
+        // A move that changes the project or gives the task a parent leaves the old
+        // section behind — it describes a column of the project being left (§5.9).
+        let section_id = if new_parent.is_some() || new_project != current.project_id {
+            None
+        } else {
+            current.section_id.clone()
+        };
         sqlx::query(
-            "UPDATE tasks SET project_id = ?, parent_id = ?, sort_order = ?, updated_at = ?, \
-             version = version + 1 WHERE id = ?",
+            "UPDATE tasks SET project_id = ?, parent_id = ?, section_id = ?, sort_order = ?, \
+             updated_at = ?, version = version + 1 WHERE id = ?",
         )
         .bind(&new_project)
         .bind(&new_parent)
+        .bind(&section_id)
         .bind(order)
         .bind(now_ms())
         .bind(id)
@@ -581,13 +617,17 @@ impl Core {
 
     /// Point `id` and everything under it at `project_id`. A task and its
     /// children answer to one project, so a reparent never splits them.
+    ///
+    /// Every section in the subtree is released as well: sections belong to the
+    /// project being left, and a task still claiming one would be filed in a
+    /// column that does not exist in its new board (§5.9).
     async fn reassign_project(&self, id: &Id, project_id: Option<&str>) -> Result<()> {
         sqlx::query(
             "WITH RECURSIVE sub(id) AS ( \
                SELECT id FROM tasks WHERE id = ? \
                UNION \
                SELECT t.id FROM tasks t JOIN sub ON t.parent_id = sub.id WHERE t.deleted_at IS NULL \
-             ) UPDATE tasks SET project_id = ? WHERE id IN (SELECT id FROM sub)",
+             ) UPDATE tasks SET project_id = ?, section_id = NULL WHERE id IN (SELECT id FROM sub)",
         )
         .bind(id)
         .bind(project_id)
@@ -762,6 +802,25 @@ fn push_task_filter(qb: &mut QueryBuilder<Sqlite>, f: &TaskFilter) {
             }
             qb.push(")");
         }
+    }
+    if let Some(sids) = &f.section_ids {
+        if !sids.is_empty() {
+            qb.push(" AND (section_id IN (");
+            for (i, s) in sids.iter().enumerate() {
+                if i > 0 {
+                    qb.push(",");
+                }
+                qb.push_bind(s.clone());
+            }
+            // `unfiled_section` asks for the tasks that are in no section, which is
+            // the board's trailing column; combining it with named sections means
+            // "any of these", never "and" (§5.9).
+            qb.push(if f.unfiled_section { ")) OR section_id IS NULL" } else { "))" });
+        } else if f.unfiled_section {
+            qb.push(" AND section_id IS NULL");
+        }
+    } else if f.unfiled_section {
+        qb.push(" AND section_id IS NULL");
     }
     if let Some(tids) = &f.tag_ids {
         if !tids.is_empty() {

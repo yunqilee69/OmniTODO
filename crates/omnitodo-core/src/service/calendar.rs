@@ -104,13 +104,24 @@ impl Core {
 
     /// Everything the calendar shows in `[from, to]`: tasks whose start/due falls
     /// in the window, plus virtual occurrences of recurring series.
-    pub async fn calendar(&self, from: i64, to: i64) -> Result<Vec<CalendarItemDto>> {
+    ///
+    /// `project_id` narrows the window to one project — what the project view's
+    /// calendar mode asks for. The narrowing happens in SQL rather than in the
+    /// caller because the task read is capped: filtering a capped page afterwards
+    /// would silently drop everything past the cap.
+    pub async fn calendar(
+        &self,
+        from: i64,
+        to: i64,
+        project_id: Option<&str>,
+    ) -> Result<Vec<CalendarItemDto>> {
         // Materialised tasks with a start or due in the window.
         let page = self
             .list_tasks(&TaskFilter {
                 sort: Sort::DueAsc,
                 include_completed: true,
                 limit: Some(1000),
+                project_ids: project_id.map(|p| vec![p.to_string()]),
                 ..Default::default()
             })
             .await?;
@@ -136,13 +147,29 @@ impl Core {
             })
             .collect();
 
-        // Virtual occurrences for every series anchor.
-        let anchors: Vec<(String,)> = sqlx::query_as(
-            "SELECT id FROM tasks WHERE series_id = id AND recurrence_rule IS NOT NULL \
-             AND deleted_at IS NULL",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        // Virtual occurrences for every series anchor in scope. The project clause
+        // is a separate statement rather than a bound `IS ?`: an unfiled task has a
+        // NULL project, so `project_id IS NULL` would drop every real project's
+        // series out of the global calendar.
+        let anchors: Vec<(String,)> = match project_id {
+            Some(pid) => {
+                sqlx::query_as(
+                    "SELECT id FROM tasks WHERE series_id = id AND recurrence_rule IS NOT NULL \
+                     AND deleted_at IS NULL AND project_id = ?",
+                )
+                .bind(pid)
+                .fetch_all(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query_as(
+                    "SELECT id FROM tasks WHERE series_id = id AND recurrence_rule IS NOT NULL \
+                     AND deleted_at IS NULL",
+                )
+                .fetch_all(&self.pool)
+                .await?
+            }
+        };
         for (series_id,) in anchors {
             for occ in self.expand_series(&series_id, from, to).await? {
                 if occ.materialized {

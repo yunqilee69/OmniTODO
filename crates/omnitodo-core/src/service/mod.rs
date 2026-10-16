@@ -24,13 +24,17 @@ pub mod recurrence;
 pub mod reminder;
 pub mod report;
 pub mod search;
+pub mod section;
 pub mod tag;
 pub mod task;
 
-pub const TASK_COLS: &str = "id, project_id, parent_id, series_id, occurrence_at, title, description, \
-     priority, status, completed_at, start_at, due_at, all_day, timezone, remind_enabled, \
-     remind_at, remind_offset_min, recurrence_rule, recurrence_until, tags_text, sort_order, \
-     created_at, updated_at, deleted_at, version, device_id";
+pub const TASK_COLS: &str = "id, project_id, parent_id, section_id, series_id, occurrence_at, title, \
+     description, priority, status, completed_at, start_at, due_at, all_day, timezone, \
+     remind_enabled, remind_at, remind_offset_min, recurrence_rule, recurrence_until, tags_text, \
+     sort_order, created_at, updated_at, deleted_at, version, device_id";
+
+pub const SECTION_COLS: &str =
+    "id, project_id, name, sort_order, created_at, updated_at, deleted_at, version, device_id";
 
 pub const PROJECT_COLS: &str = "id, name, description, color, icon, sort_order, is_archived, \
      created_at, updated_at, deleted_at, version, device_id";

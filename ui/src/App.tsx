@@ -128,7 +128,7 @@ export default function App() {
                     OmniTODO
                   </span>
                 </div>
-                <Button type="primary" block icon={<PlusOutlined />} onClick={openQuickAdd}>
+                <Button type="primary" block icon={<PlusOutlined />} onClick={() => openQuickAdd()}>
                   添加任务
                 </Button>
                 <Input

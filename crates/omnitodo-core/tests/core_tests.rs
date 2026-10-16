@@ -730,7 +730,7 @@ async fn calendar_merges_materialized_and_virtual() {
     assert_eq!(times.len(), len);
 
     // Calendar window: past materialised + future virtual, ordered.
-    let items = core.calendar(anchor, anchor + 5 * DAY).await.unwrap();
+    let items = core.calendar(anchor, anchor + 5 * DAY, None).await.unwrap();
     assert!(items.iter().any(|i| i.virtual_occurrence && i.task_id.is_none()));
     assert!(items.iter().any(|i| !i.virtual_occurrence && i.task_id.is_some()));
     for i in 1..items.len() {
@@ -1367,3 +1367,439 @@ async fn unusable_stored_token_is_replaced_on_read() {
     assert!(endpoint::validate_token(&repaired).is_ok());
 }
 
+
+// -- sections (§5.9) ---------------------------------------------------------
+
+async fn project_with_sections(core: &Core, names: &[&str]) -> (ProjectDto, Vec<SectionDto>) {
+    let p = core
+        .create_project(CreateProjectInput {
+            name: "Board".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut out = Vec::new();
+    for name in names {
+        out.push(
+            core.create_section(CreateSectionInput {
+                project_id: p.id.clone(),
+                name: (*name).into(),
+                sort_order: None,
+            })
+            .await
+            .unwrap(),
+        );
+    }
+    (p, out)
+}
+
+#[tokio::test]
+async fn section_crud_names_and_order() {
+    let (core, _d) = core().await;
+    let (p, sections) = project_with_sections(&core, &[" 待办 ", "进行中", "已完成"]).await;
+    assert_eq!(sections[0].name, "待办", "names are trimmed");
+    assert_eq!(sections[0].sort_order, 0);
+    assert_eq!(sections[2].sort_order, 2);
+
+    // Same name, different case, same project: rejected.
+    let dup = core
+        .create_section(CreateSectionInput {
+            project_id: p.id.clone(),
+            name: "待办".into(),
+            sort_order: None,
+        })
+        .await;
+    assert!(dup.is_err(), "section names are unique per project");
+
+    // The same name in another project is fine.
+    let other = core
+        .create_project(CreateProjectInput {
+            name: "Other".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    core.create_section(CreateSectionInput {
+        project_id: other.id.clone(),
+        name: "待办".into(),
+        sort_order: None,
+    })
+    .await
+    .unwrap();
+
+    // Rename to a sibling's name: rejected. Rename to its own name: allowed.
+    let clash = core
+        .update_section(
+            &sections[0].id,
+            SectionPatch {
+                name: Some("进行中".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(clash.is_err());
+    let same = core
+        .update_section(
+            &sections[0].id,
+            SectionPatch {
+                name: Some("待办".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(same.version, sections[0].version + 1);
+
+    // Reorder: the new order is what reads back.
+    core.reorder_sections(&[sections[2].id.clone(), sections[0].id.clone(), sections[1].id.clone()])
+        .await
+        .unwrap();
+    let listed = core.list_sections(&p.id).await.unwrap();
+    let names: Vec<&str> = listed.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, vec!["已完成", "待办", "进行中"]);
+
+    // A stale version is a conflict, not a silent overwrite.
+    let stale = core
+        .update_section(
+            &sections[0].id,
+            SectionPatch {
+                name: Some("稍后".into()),
+                expected_version: Some(sections[0].version),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(stale.is_err());
+}
+
+#[tokio::test]
+async fn section_membership_counts_and_delete_releases_tasks() {
+    let (core, _d) = core().await;
+    let (p, sections) = project_with_sections(&core, &["待办", "进行中"]).await;
+    let doing = &sections[1];
+
+    let filed = core
+        .create_task(CreateTaskInput {
+            title: "filed".into(),
+            project_id: Some(p.id.clone()),
+            section_id: Some(doing.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(filed.section_id.as_deref(), Some(doing.id.as_str()));
+
+    // A subtask of a filed task carries no section of its own.
+    let child = core
+        .create_task(CreateTaskInput {
+            title: "child".into(),
+            project_id: Some(p.id.clone()),
+            parent_id: Some(filed.id.clone()),
+            section_id: Some(doing.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(child.section_id, None);
+
+    // Only top-level tasks count towards a column's badge.
+    let listed = core.list_sections(&p.id).await.unwrap();
+    let doing_dto = listed.iter().find(|s| s.id == doing.id).unwrap();
+    assert_eq!(doing_dto.task_count, 1);
+
+    // Filing a task into another project's section is refused.
+    let elsewhere = core
+        .create_project(CreateProjectInput {
+            name: "Elsewhere".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let other_section = core
+        .create_section(CreateSectionInput {
+            project_id: elsewhere.id.clone(),
+            name: "杂项".into(),
+            sort_order: None,
+        })
+        .await
+        .unwrap();
+    let cross = core
+        .update_task(
+            &filed.id,
+            TaskPatch {
+                section_id: Some(other_section.id.clone()),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(cross.is_err(), "a section must belong to the task's project");
+
+    // Deleting the section keeps the task and moves it to "no section".
+    let released = core.delete_section(&doing.id, false).await.unwrap();
+    assert_eq!(released, 1);
+    let after = core.get_task(&filed.id).await.unwrap();
+    assert_eq!(after.section_id, None);
+    assert!(core.get_section(&doing.id).await.is_err());
+    assert!(core.list_sections(&p.id).await.unwrap().len() == 1);
+}
+
+#[tokio::test]
+async fn section_is_released_when_the_task_leaves_the_project_or_gains_a_parent() {
+    let (core, _d) = core().await;
+    let (p, sections) = project_with_sections(&core, &["待办"]).await;
+    let section = &sections[0];
+
+    let a = core
+        .create_task(CreateTaskInput {
+            title: "a".into(),
+            project_id: Some(p.id.clone()),
+            section_id: Some(section.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let b = core
+        .create_task(CreateTaskInput {
+            title: "b".into(),
+            project_id: Some(p.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    // Nested under a sibling: the section no longer describes this row.
+    let nested = core
+        .update_task(
+            &a.id,
+            TaskPatch {
+                parent_id: Some(b.id.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(nested.section_id, None);
+
+    // Back to the top level: it does not reappear on its own.
+    let unnested = core
+        .update_task(
+            &a.id,
+            TaskPatch {
+                clear_parent_id: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(unnested.section_id, None);
+    // ...but it can be filed again on purpose.
+    let refiled = core
+        .update_task(
+            &a.id,
+            TaskPatch {
+                section_id: Some(section.id.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(refiled.section_id.as_deref(), Some(section.id.as_str()));
+
+    // A project move releases it, and `move_task` is the other door in.
+    let elsewhere = core
+        .create_project(CreateProjectInput {
+            name: "Elsewhere".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let moved = core
+        .update_task(
+            &a.id,
+            TaskPatch {
+                project_id: Some(elsewhere.id.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(moved.section_id, None);
+
+    let refiled = core
+        .update_task(
+            &a.id,
+            TaskPatch {
+                section_id: Some(section.id.clone()),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(refiled.is_err(), "the old section belongs to the old project");
+
+    // `move_task` into the section's project still does not re-file it.
+    core.move_task(&a.id, Some(Some(p.id.clone())), None, None)
+        .await
+        .unwrap();
+    assert_eq!(core.get_task(&a.id).await.unwrap().section_id, None);
+}
+
+#[tokio::test]
+async fn deleting_a_project_takes_its_sections() {
+    let (core, _d) = core().await;
+    let (p, sections) = project_with_sections(&core, &["待办", "进行中"]).await;
+    let filed = core
+        .create_task(CreateTaskInput {
+            title: "filed".into(),
+            project_id: Some(p.id.clone()),
+            section_id: Some(sections[0].id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    core.delete_project(&p.id).await.unwrap();
+    assert!(core.list_sections(&p.id).await.is_err());
+    assert!(core.get_section(&sections[0].id).await.is_err());
+    // The task is gone too, so nothing is left claiming a dead column.
+    assert!(core.get_task(&filed.id).await.is_err());
+}
+
+#[tokio::test]
+async fn task_filter_can_scope_to_sections() {
+    let (core, _d) = core().await;
+    let (p, sections) = project_with_sections(&core, &["待办", "进行中"]).await;
+    for (title, section) in [
+        ("filed", Some(sections[0].id.clone())),
+        ("doing", Some(sections[1].id.clone())),
+        ("loose", None),
+    ] {
+        core.create_task(CreateTaskInput {
+            title: title.into(),
+            project_id: Some(p.id.clone()),
+            section_id: section,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    }
+
+    let in_first = core
+        .list_tasks(&TaskFilter {
+            project_ids: Some(vec![p.id.clone()]),
+            section_ids: Some(vec![sections[0].id.clone()]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(in_first.items.len(), 1);
+    assert_eq!(in_first.items[0].title, "filed");
+
+    // Both columns at once.
+    let both = core
+        .list_tasks(&TaskFilter {
+            project_ids: Some(vec![p.id.clone()]),
+            section_ids: Some(vec![sections[0].id.clone(), sections[1].id.clone()]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(both.items.len(), 2);
+
+    // "No section" is the board's trailing column.
+    let loose = core
+        .list_tasks(&TaskFilter {
+            project_ids: Some(vec![p.id.clone()]),
+            unfiled_section: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(loose.items.len(), 1);
+    assert_eq!(loose.items[0].title, "loose");
+
+    // Named columns OR "no section".
+    let all = core
+        .list_tasks(&TaskFilter {
+            project_ids: Some(vec![p.id.clone()]),
+            section_ids: Some(vec![sections[0].id.clone()]),
+            unfiled_section: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(all.items.len(), 2);
+}
+
+#[tokio::test]
+async fn calendar_can_be_scoped_to_one_project() {
+    let (core, _d) = core().await;
+    let (p, _sections) = project_with_sections(&core, &["待办"]).await;
+    let now = now_ms();
+    let other = core
+        .create_project(CreateProjectInput {
+            name: "Other".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    for (title, project) in [("mine", &p.id), ("theirs", &other.id)] {
+        core.create_task(CreateTaskInput {
+            title: title.into(),
+            project_id: Some(project.clone()),
+            due_at: Some(now + DAY),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    }
+
+    let all = core.calendar(now, now + 2 * DAY, None).await.unwrap();
+    assert_eq!(all.len(), 2);
+    let mine = core.calendar(now, now + 2 * DAY, Some(&p.id)).await.unwrap();
+    assert_eq!(mine.len(), 1);
+    assert_eq!(mine[0].title, "mine");
+}
+
+#[tokio::test]
+async fn deleting_a_section_can_take_its_tasks_with_it() {
+    let (core, _d) = core().await;
+    let (p, sections) = project_with_sections(&core, &["待办", "进行中"]).await;
+
+    let filed = core
+        .create_task(CreateTaskInput {
+            title: "parent".into(),
+            project_id: Some(p.id.clone()),
+            section_id: Some(sections[0].id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let child = core
+        .create_task(CreateTaskInput {
+            title: "child".into(),
+            project_id: Some(p.id.clone()),
+            parent_id: Some(filed.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    // A task in the *other* section must not be touched.
+    let survivor = core
+        .create_task(CreateTaskInput {
+            title: "survivor".into(),
+            project_id: Some(p.id.clone()),
+            section_id: Some(sections[1].id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    // The subtree goes with the section, so the count is tasks, not rows.
+    let deleted = core.delete_section(&sections[0].id, true).await.unwrap();
+    assert_eq!(deleted, 2);
+    assert!(core.get_task(&filed.id).await.is_err());
+    assert!(core.get_task(&child.id).await.is_err());
+    assert_eq!(core.get_task(&survivor.id).await.unwrap().title, "survivor");
+    assert!(core.get_section(&sections[0].id).await.is_err());
+    assert_eq!(core.list_sections(&p.id).await.unwrap().len(), 1);
+}

@@ -137,6 +137,49 @@ pub async fn project_find_similar(state: State<'_, AppState>, name: String) -> R
     Ok(state.core.find_similar_projects(&name).await?)
 }
 
+// -- sections ---------------------------------------------------------------
+
+#[tauri::command]
+pub async fn section_create(state: State<'_, AppState>, input: CreateSectionInput) -> R<SectionDto> {
+    Ok(state.core.create_section(input).await?)
+}
+
+#[tauri::command]
+pub async fn section_list(state: State<'_, AppState>, project_id: String) -> R<Vec<SectionDto>> {
+    Ok(state.core.list_sections(&project_id).await?)
+}
+
+#[tauri::command]
+pub async fn section_get(state: State<'_, AppState>, id: String) -> R<SectionDto> {
+    Ok(state.core.get_section(&id).await?)
+}
+
+#[tauri::command]
+pub async fn section_update(
+    state: State<'_, AppState>,
+    id: String,
+    patch: SectionPatch,
+) -> R<SectionDto> {
+    Ok(state.core.update_section(&id, patch).await?)
+}
+
+#[tauri::command]
+pub async fn section_reorder(state: State<'_, AppState>, ids: Vec<String>) -> R<()> {
+    Ok(state.core.reorder_sections(&ids).await?)
+}
+
+/// `deleteTasks` decides whether the section's tasks go with it (Todoist's
+/// behaviour) or are released into "no section" (the default). Either way the
+/// count that comes back is the number of tasks affected.
+#[tauri::command]
+pub async fn section_delete(
+    state: State<'_, AppState>,
+    id: String,
+    delete_tasks: Option<bool>,
+) -> R<usize> {
+    Ok(state.core.delete_section(&id, delete_tasks.unwrap_or(false)).await?)
+}
+
 // -- tags -------------------------------------------------------------------
 
 #[tauri::command]
@@ -315,8 +358,9 @@ pub async fn calendar(
     state: State<'_, AppState>,
     from: i64,
     to: i64,
+    project_id: Option<String>,
 ) -> R<Vec<omnitodo_core::service::calendar::CalendarItemDto>> {
-    Ok(state.core.calendar(from, to).await?)
+    Ok(state.core.calendar(from, to, project_id.as_deref()).await?)
 }
 
 #[tauri::command]

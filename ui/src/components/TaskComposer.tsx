@@ -35,6 +35,7 @@ export default function TaskComposer({
   projectName,
   projectColor,
   parentId,
+  sectionId,
   noun = "任务",
   inset = true,
   showTrigger = true,
@@ -46,6 +47,9 @@ export default function TaskComposer({
   /** Adds a child of this task. The core inherits the parent's project, so the
    *  new subtask lands in the same place as the task it was typed under. */
   parentId?: string;
+  /** Files the new task into this section — the board column's composer, and the
+   *  `＋` on a list section header. Ignored for a subtask (§5.9). */
+  sectionId?: string;
   /** What is being added, in the trigger, the field placeholder and the labels. */
   noun?: string;
   /** Inset the row to the list's checkbox column so it reads as one more line of
@@ -97,7 +101,11 @@ export default function TaskComposer({
       titleRef.current?.focus();
     };
     if (parentId) addSubtask.mutate({ parentId, input }, { onSuccess: keepTyping });
-    else create.mutate({ ...input, project_id: projectId }, { onSuccess: keepTyping });
+    else
+      create.mutate(
+        { ...input, project_id: projectId, section_id: sectionId ?? null },
+        { onSuccess: keepTyping },
+      );
   };
 
   const collapse = () => {

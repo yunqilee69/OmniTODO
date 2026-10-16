@@ -1,156 +1,252 @@
 import { describe, expect, it } from "vitest";
-import { ROW_INDENT_STEP } from "./layout";
-import { nestMove, planDrop, resolveDropIntent } from "./nestDrop";
+import { MAX_TASK_DEPTH, ROW_INDENT_STEP } from "./layout";
+import {
+  indentDeltaFromDrag,
+  planPlacement,
+  resolveDropBand,
+  type VisibleRow,
+} from "./nestDrop";
 
 const ROW = 40;
+const STEP = ROW_INDENT_STEP;
 
-describe("resolveDropIntent", () => {
-  it("treats the top of the row as insert-before, however far right the drag went", () => {
-    expect(resolveDropIntent(0, ROW, 0)).toBe("before");
-    expect(resolveDropIntent(10, ROW, 200)).toBe("before");
+/** A visible row, at `depth`, under `parentId`. */
+const row = (id: string, depth = 0, parentId: string | null = null): VisibleRow => ({
+  id,
+  depth,
+  parentId,
+});
+
+/** `planPlacement` with the boring arguments filled in. */
+const plan = (
+  rows: VisibleRow[],
+  over: Partial<Parameters<typeof planPlacement>[0]> = {},
+) =>
+  planPlacement({
+    rows,
+    activeId: "x",
+    overId: rows[rows.length - 1]?.id ?? "x",
+    band: "after",
+    indentDelta: 0,
+    ...over,
   });
 
-  it("treats the bottom, dragged straight down, as insert-after", () => {
-    expect(resolveDropIntent(30, ROW, 0)).toBe("after");
-    expect(resolveDropIntent(30, ROW, -200)).toBe("after");
-  });
-
-  it("treats the bottom, pushed one indent step right, as a child", () => {
-    expect(resolveDropIntent(30, ROW, ROW_INDENT_STEP)).toBe("child");
-    expect(resolveDropIntent(39, ROW, 200)).toBe("child");
-  });
-
-  // The bug this guards. The threshold used to be the pointer's *absolute*
-  // offset inside the row, compared against `rowPaddingLeft(depth)` (12px at
-  // depth 0), so "child" needed offsetX >= 32. Measured in the running app, a
-  // row is ~500px wide and its handle sits 44px in, its checkbox 60px, its
-  // title 84px — so every drop in the bottom band was read as "child". That
-  // silently reparented rows; the project view lists root tasks only, so the
-  // dragged row just vanished. The intent now depends only on how far the drag
-  // travelled right, so no row column or width can reach the child slot by
-  // accident.
-  it("does not depend on where in the row the drag started", () => {
-    const dx = 0;
-    // Every one of these used to be classified by an absolute offset well
-    // past the 32px cut; now a zero-width drag is a sibling everywhere.
-    for (const _handleOffset of [44, 60, 84, 480]) {
-      expect(resolveDropIntent(30, ROW, dx)).toBe("after");
-    }
-    expect(resolveDropIntent(30, ROW, ROW_INDENT_STEP - 1)).toBe("after");
+describe("resolveDropBand", () => {
+  it("splits the hovered row at its midpoint", () => {
+    expect(resolveDropBand(0, ROW)).toBe("before");
+    expect(resolveDropBand(ROW / 2 - 1, ROW)).toBe("before");
+    // The midpoint itself belongs to the lower gap, so the two bands tile the
+    // row without an unclaimed pixel between them.
+    expect(resolveDropBand(ROW / 2, ROW)).toBe("after");
+    expect(resolveDropBand(ROW - 1, ROW)).toBe("after");
   });
 
   it("falls back to before for a row with no measurable height", () => {
-    expect(resolveDropIntent(0, 0, 0)).toBe("before");
+    // Mid-layout or hidden: there are no bands to split, and "before" is the
+    // harmless reading.
+    expect(resolveDropBand(0, 0)).toBe("before");
+    expect(resolveDropBand(10, -1)).toBe("before");
   });
 });
 
-describe("nestMove", () => {
-  const ids = ["a", "b", "c", "d"];
-
-  it("inserts before the hovered row", () => {
-    expect(nestMove(ids, "d", "b", "before")).toEqual(["a", "d", "b", "c"]);
+describe("indentDeltaFromDrag", () => {
+  it("counts one level per indent step travelled", () => {
+    expect(indentDeltaFromDrag(0)).toBe(0);
+    expect(indentDeltaFromDrag(STEP)).toBe(1);
+    expect(indentDeltaFromDrag(2 * STEP)).toBe(2);
+    expect(indentDeltaFromDrag(-STEP)).toBe(-1);
+    expect(indentDeltaFromDrag(-2 * STEP)).toBe(-2);
   });
 
-  it("inserts after the hovered row", () => {
-    expect(nestMove(ids, "a", "c", "after")).toEqual(["b", "c", "a", "d"]);
+  it("rounds, so a half-step wobble is not a level", () => {
+    expect(indentDeltaFromDrag(STEP / 2 - 1)).toBe(0);
+    expect(indentDeltaFromDrag(STEP / 2)).toBe(1);
+    expect(indentDeltaFromDrag(3 * STEP + 4)).toBe(3);
   });
 
-  it("inserts after a row that itself slides up when the dragged row leaves", () => {
-    // Dropping b after a: a stays put, b comes back to where it was.
-    expect(nestMove(ids, "b", "a", "after")).toBeNull();
-    // Dropping a after b lands it between b and c, not back at the front.
-    expect(nestMove(ids, "a", "b", "after")).toEqual(["b", "a", "c", "d"]);
-  });
-
-  it("returns null when nothing moves", () => {
-    expect(nestMove(ids, "b", "c", "before")).toBeNull();
-    expect(nestMove(ids, "a", "a", "before")).toBeNull();
-    expect(nestMove(ids, "a", "gone", "before")).toBeNull();
-    // Reparenting is the caller's job, not a reorder of this group.
-    expect(nestMove(ids, "a", "b", "child")).toBeNull();
-  });
-
-  // Dropping a row beside a row of a group it is not in: the newcomer joins that
-  // group, which is the other half of how a subtask comes back out.
-  it("splices in a row that is not in the group yet", () => {
-    const roots = ["a", "b", "c"];
-    expect(nestMove(roots, "s1", "b", "before")).toEqual(["a", "s1", "b", "c"]);
-    expect(nestMove(roots, "s1", "b", "after")).toEqual(["a", "b", "s1", "c"]);
-    expect(nestMove(roots, "s1", "c", "after")).toEqual(["a", "b", "c", "s1"]);
+  // The bug this guards. The old model read the pointer's *absolute* offset
+  // inside the row and compared it against the row's own left padding, so
+  // "become a child" needed offsetX past ~32px. Measured in the running app a
+  // row is ~500px wide, its handle sits 44px in and its checkbox 60px, so every
+  // drop in the bottom band read as "child" and silently reparented the row —
+  // in the project view, which lists root tasks only, the row just vanished.
+  // Depth now depends only on how far the *drag* travelled sideways, so no row
+  // column or width can reach a deeper level by accident.
+  it("does not depend on where in the row the drag started", () => {
+    for (const _handleOffset of [0, 44, 60, 84, 480]) {
+      expect(indentDeltaFromDrag(0)).toBe(0);
+    }
   });
 });
 
-describe("planDrop", () => {
-  const roots = ["a", "b", "c"];
-  const plan = (over: Partial<Parameters<typeof planDrop>[0]> = {}) =>
-    planDrop({
-      activeId: "s1",
-      activeParent: "p",
-      overId: "b",
-      overParent: null,
-      groupIds: roots,
-      intent: "after",
-      ...over,
+describe("planPlacement", () => {
+  const flat = [row("a"), row("b"), row("c")];
+
+  describe("reordering without changing level", () => {
+    it("moves a row up in its own group", () => {
+      expect(plan(flat, { activeId: "c", overId: "b", band: "before" })).toEqual({
+        depth: 0,
+        parent: null,
+        order: ["a", "c", "b"],
+      });
     });
 
-  // The reported bug: a subtask could be dragged *into* another row but never
-  // back out, because the handler only reordered within the dragged task's own
-  // sibling group and quietly dropped every other target.
-  it("lifts a subtask to the top level when dropped beside a top-level row", () => {
-    expect(plan()).toEqual({ order: ["a", "b", "s1", "c"], parent: null });
-  });
-
-  it("lifts a subtask out from under a deep parent when dropped on its own parent row", () => {
-    // s1 is a child of p, which is itself a child of g: landing beside p makes
-    // s1 p's sibling, i.e. one level up, not all the way to the top.
-    const order = planDrop({
-      activeId: "s1",
-      activeParent: "p",
-      overId: "p",
-      overParent: "g",
-      groupIds: ["p", "q"],
-      intent: "before",
+    it("moves a row down in its own group", () => {
+      expect(plan(flat, { activeId: "a", overId: "b", band: "after" })).toEqual({
+        depth: 0,
+        parent: null,
+        order: ["b", "a", "c"],
+      });
     });
-    expect(order).toEqual({ order: ["s1", "p", "q"], parent: "g" });
+
+    it("returns null when the drop changes nothing", () => {
+      // b already follows a: dropping it back there is not a move.
+      expect(plan(flat, { activeId: "b", overId: "a", band: "after" })).toBeNull();
+      // The same for the tail: c is already last.
+      expect(plan(flat, { activeId: "c", overId: "b", band: "after" })).toBeNull();
+    });
+
+    it("returns null for a drop onto itself or an unknown target", () => {
+      expect(plan(flat, { activeId: "b", overId: "b", band: "before" })).toBeNull();
+      expect(plan(flat, { activeId: "b", overId: "gone", band: "before" })).toBeNull();
+    });
+
+    it("splices in a row that is not in the list yet", () => {
+      // A row dragged in from elsewhere is not in `rows`, so nothing is
+      // filtered out and the newcomer joins the hovered row's group.
+      expect(plan(flat, { activeId: "s", overId: "b", band: "before" })).toEqual({
+        depth: 0,
+        parent: null,
+        order: ["a", "s", "b", "c"],
+      });
+    });
   });
 
-  it("keeps the parent when the drop stays inside the group", () => {
-    // No parent to write: the drop is a plain reorder of the hovered row's group.
-    expect(
-      planDrop({
-        activeId: "s1",
-        activeParent: "p",
-        overId: "s2",
-        overParent: "p",
-        groupIds: ["s1", "s2"],
-        intent: "after",
-      }),
-    ).toEqual({ order: ["s2", "s1"], parent: undefined });
+  describe("nesting one level deeper", () => {
+    it("makes the row above the parent when pushed one step right", () => {
+      expect(
+        plan(flat, { activeId: "c", overId: "a", band: "after", indentDelta: 1 }),
+      ).toEqual({ depth: 1, parent: "a", order: ["c"] });
+    });
+
+    it("nests several levels in a single gesture", () => {
+      // Two steps right, one drag: no per-level round trip.
+      const rows = [row("p"), row("x", 1, "p"), row("y", 1, "p"), row("q")];
+      expect(
+        plan(rows, { activeId: "q", overId: "x", band: "after", indentDelta: 2 }),
+      ).toEqual({ depth: 2, parent: "x", order: ["q"] });
+    });
+
+    it("follows the row above when the drag did not move sideways", () => {
+      // A straight-down drag into the middle of a branch joins that branch at
+      // the level of the row it lands beside, rather than holding its own level
+      // and having the clamp flatten it — which would read as the row jumping a
+      // level on its way past.
+      const rows = [row("p"), row("b", 1, "p"), row("c", 2, "b"), row("x")];
+      expect(
+        plan(rows, { activeId: "x", overId: "c", band: "before" }),
+      ).toEqual({ depth: 2, parent: "b", order: ["x", "c"] });
+    });
+
+    it("caps the depth at the deepest level the tree allows", () => {
+      // Five levels of branch, then a top-level row pushed five steps right.
+      const rows = [
+        row("a"),
+        row("b", 1, "a"),
+        row("c", 2, "b"),
+        row("d", 3, "c"),
+        row("e", 4, "d"),
+        row("x"),
+      ];
+      const placement = plan(rows, {
+        activeId: "x",
+        overId: "e",
+        band: "after",
+        indentDelta: 5,
+      });
+      expect(placement).toEqual({ depth: MAX_TASK_DEPTH - 1, parent: "d", order: ["e", "x"] });
+      expect(placement!.depth).toBeLessThanOrEqual(MAX_TASK_DEPTH - 1);
+    });
   });
 
-  it("files a top-level task under the hovered row's parent", () => {
-    // Dropping a root task beside a subtask makes it a sibling of that subtask,
-    // which is the same rule read the other way.
-    expect(
-      planDrop({
-        activeId: "a",
-        activeParent: null,
-        overId: "s2",
-        overParent: "p",
-        groupIds: ["s1", "s2"],
-        intent: "after",
-      }),
-    ).toEqual({ order: ["s1", "s2", "a"], parent: "p" });
+  describe("lifting a row back out", () => {
+    it("hoists a subtask to the top level when dragged left", () => {
+      const rows = [row("p"), row("a", 1, "p"), row("b", 1, "p")];
+      expect(
+        plan(rows, { activeId: "b", overId: "a", band: "after", indentDelta: -1 }),
+      ).toEqual({ depth: 0, parent: null, order: ["p", "b"] });
+    });
+
+    it("hoists a subtask to an intermediate level, not all the way out", () => {
+      // s2 is p's child and p is g's: outdenting one step makes s2 g's child,
+      // beside p, rather than a root task.
+      const rows = [
+        row("g"),
+        row("p", 1, "g"),
+        row("s1", 2, "p"),
+        row("s2", 2, "p"),
+        row("q", 1, "g"),
+      ];
+      expect(
+        plan(rows, { activeId: "s2", overId: "q", band: "before", indentDelta: -1 }),
+      ).toEqual({ depth: 1, parent: "g", order: ["p", "s2", "q"] });
+    });
+
+    it("outdents a subtask by dropping it above its own parent", () => {
+      // The slot above the parent row is the only place a first child can go to
+      // reach the level above, so this has to read as a lift and not as a
+      // no-op. The slot has no row above it, which is also the case where the
+      // depth cap and floor meet at 0 and the shallow reading has to win.
+      const rows = [row("a"), row("b", 1, "a")];
+      expect(plan(rows, { activeId: "b", overId: "a", band: "before" })).toEqual({
+        depth: 0,
+        parent: null,
+        order: ["b", "a"],
+      });
+    });
+
+    it("holds the row below when the drag outdents past the list", () => {
+      // x was dragged far left — one level above the top — but the row it lands
+      // above is a child of p, so it can only rise to p's first child. Landing
+      // it at the top level would hoist it out from under the row that follows.
+      const rows = [row("p"), row("s", 1, "p"), row("x")];
+      expect(
+        plan(rows, { activeId: "x", overId: "s", band: "before", indentDelta: -1 }),
+      ).toEqual({ depth: 1, parent: "p", order: ["x", "s"] });
+    });
   });
 
-  it("refuses to make a task its own child, and ignores a no-op", () => {
-    // Dropped on a row that is s1's own child: landing beside it would file s1
-    // under s1. The core would refuse it too, but nothing should be written.
-    expect(plan({ overId: "g1", overParent: "s1" })).toBeNull();
-    // Dropping a row back onto itself, or right before the row it already
-    // follows, changes nothing.
-    expect(plan({ activeId: "s1", overId: "s1", overParent: "p", groupIds: ["s1", "s2"] })).toBeNull();
-    expect(plan({ activeId: "b", activeParent: null, overId: "b", overParent: null })).toBeNull();
-    expect(plan({ activeId: "a", activeParent: null, overId: "a", overParent: null })).toBeNull();
+  describe("refusing placements the tree cannot hold", () => {
+    it("refuses to file a row under its own child", () => {
+      // p dragged two steps right beside t, which sits at depth 3 under p:
+      // the depth works out, but the parent it derives is p's own descendant.
+      const rows = [row("g"), row("p", 1, "g"), row("s", 2, "p"), row("t", 3, "s")];
+      expect(
+        plan(rows, { activeId: "p", overId: "t", band: "after", indentDelta: 2 }),
+      ).toBeNull();
+    });
+
+    it("refuses to make a row its own parent", () => {
+      // a dropped one step right beside c, which is a's own child: the derived
+      // parent is a itself. The core refuses this too, but nothing should be
+      // written for the optimistic pass to roll back.
+      const rows = [row("a"), row("b", 1, "a"), row("c", 2, "b"), row("y")];
+      expect(
+        plan(rows, { activeId: "a", overId: "c", band: "after", indentDelta: 1 }),
+      ).toBeNull();
+    });
+  });
+
+  describe("a row dragged in from another list", () => {
+    // Nothing is filtered out of `rows`, so the hovered row is the only honest
+    // starting level — the dragged row has no depth in this list yet.
+    it("starts from the hovered row's level", () => {
+      const rows = [row("a"), row("b", 1, "a")];
+      expect(plan(rows, { activeId: "s", overId: "b", band: "after" })).toEqual({
+        depth: 1,
+        parent: "a",
+        order: ["b", "s"],
+      });
+    });
   });
 });

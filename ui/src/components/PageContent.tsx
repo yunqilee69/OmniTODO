@@ -18,15 +18,24 @@ import { CONTENT_MAX_WIDTH, LIST_LEFT_INSET } from "../lib/layout";
 export default function PageContent({
   children,
   taskList = false,
+  wide = false,
 }: {
   children: ReactNode;
   taskList?: boolean;
+  /** Drop the width cap and the padding, and let the child fill the pane. The
+   *  board and the calendar are the two views that are not a column of rows: the
+   *  board scrolls sideways through 286px columns and the calendar needs seven of
+   *  them, so a 760px measure would show two and a half days of a week. */
+  wide?: boolean;
 }) {
   const slack = `(100% - ${CONTENT_MAX_WIDTH}px) / 2`;
   // `max(0px, …)` keeps the shift from pushing the column off the left edge once
   // the pane is too narrow for the cap to bite (there the column is already full
   // width, and the room for the gutters is gone).
   const shift = LIST_LEFT_INSET / 2;
+  if (wide) {
+    return <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>;
+  }
   return (
     <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
       <div

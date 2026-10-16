@@ -14,6 +14,7 @@ use omnitodo_core::service::Core;
 pub const READ_TOOLS: &[&str] = &[
     "list_projects",
     "get_project",
+    "list_sections",
     "list_tasks",
     "get_task",
     "list_subtasks",
@@ -35,6 +36,9 @@ pub const WRITE_TOOLS: &[&str] = &[
     "add_subtask",
     "add_tags",
     "move_task",
+    "create_section",
+    "update_section",
+    "delete_section",
 ];
 
 pub fn is_write_tool(name: &str) -> bool {
@@ -86,6 +90,10 @@ fn describe(name: &str) -> (&'static str, Value) {
         "get_project" => (
             "Get one project with stats. `id` may be the project id or its name",
             json!({"type":"object","properties":{"id":{"type":"string","description":"Project id, or its name"}},"required":["id"]}),
+        ),
+        "list_sections" => (
+            "A project's sections (the board view's columns) in display order, each with its live top-level task count. Returns {items}",
+            json!({"type":"object","properties":{"project_id":{"type":"string","description":"Project id, or its name"}},"required":["project_id"]}),
         ),
         "list_tasks" => (
             "List tasks, paginated. Defaults to open tasks (todo and in_progress); pass scope to include completed or everything. Returns {items,total,limit,offset}",
@@ -156,6 +164,18 @@ fn describe(name: &str) -> (&'static str, Value) {
         "add_tags" => (
             "Append tags to a task",
             json!({"type":"object","properties":{"task_id":{"type":"string"},"tag_names":{"type":"array","items":{"type":"string"}}},"required":["task_id","tag_names"]}),
+        ),
+        "create_section" => (
+            "Create a section in a project. Names are unique per project, case-insensitively. Returns the section",
+            json!({"type":"object","properties":{"project_id":{"type":"string","description":"Project id, or its name"},"name":{"type":"string"},"sort_order":{"type":"integer","description":"Defaults to the end"}},"required":["project_id","name"]}),
+        ),
+        "update_section" => (
+            "Rename or reorder a section. Returns the section",
+            json!({"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"sort_order":{"type":"integer"},"expected_version":{"type":"integer"}},"required":["id"]}),
+        ),
+        "delete_section" => (
+            "Delete a section. By default its tasks are kept and released into \"no section\"; pass delete_tasks to delete them with the section. Returns {affected_tasks}",
+            json!({"type":"object","properties":{"id":{"type":"string"},"delete_tasks":{"type":"boolean","description":"Also delete the section's tasks (and their subtrees). Defaults to false"}},"required":["id"]}),
         ),
         "move_task" => (
             "Move a task to another project/parent",
@@ -259,6 +279,15 @@ async fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value> 
             let id = core.resolve_project_id(&a.id).await?;
             to_value(&core.get_project(&id).await?)
         }
+        "list_sections" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                project_id: String,
+            }
+            let a: A = parse(args)?;
+            let pid = core.resolve_project_id(&a.project_id).await?;
+            items(&core.list_sections(&pid).await?)
+        }
         "list_tasks" => {
             let filter = task_filter_from_args(core, args).await?;
             to_value(&core.list_tasks(&filter).await?)
@@ -356,12 +385,14 @@ async fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value> 
                 to: Option<i64>,
                 #[serde(default)]
                 days: Option<i64>,
+                #[serde(default)]
+                project_id: Option<String>,
             }
             let a: A = parse(args)?;
             let now = now_ms();
             let from = a.from.unwrap_or(now);
             let to = a.to.unwrap_or(from + a.days.unwrap_or(30) * 86_400_000);
-            items(&core.calendar(from, to).await?)
+            items(&core.calendar(from, to, a.project_id.as_deref()).await?)
         }
         "export_tasks" => {
             let mut filter = task_filter_from_args(core, args).await?;
@@ -458,6 +489,62 @@ async fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value> 
             let project = a.project_id.map(Some);
             let parent = a.parent_id.map(Some);
             to_value(&core.move_task(&a.id, project, parent, a.sort_order).await?)
+        }
+        "create_section" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                project_id: String,
+                name: String,
+                #[serde(default)]
+                sort_order: Option<i64>,
+            }
+            let a: A = parse(args)?;
+            let project_id = core.resolve_project_id(&a.project_id).await?;
+            to_value(
+                &core
+                    .create_section(CreateSectionInput {
+                        project_id,
+                        name: a.name,
+                        sort_order: a.sort_order,
+                    })
+                    .await?,
+            )
+        }
+        "update_section" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                id: String,
+                #[serde(default)]
+                name: Option<String>,
+                #[serde(default)]
+                sort_order: Option<i64>,
+                #[serde(default)]
+                expected_version: Option<i64>,
+            }
+            let a: A = parse(args)?;
+            to_value(
+                &core
+                    .update_section(
+                        &a.id,
+                        SectionPatch {
+                            name: a.name,
+                            sort_order: a.sort_order,
+                            expected_version: a.expected_version,
+                        },
+                    )
+                    .await?,
+            )
+        }
+        "delete_section" => {
+            #[derive(serde::Deserialize)]
+            struct A {
+                id: String,
+                #[serde(default)]
+                delete_tasks: Option<bool>,
+            }
+            let a: A = parse(args)?;
+            let affected = core.delete_section(&a.id, a.delete_tasks.unwrap_or(false)).await?;
+            Ok(json!({ "affected_tasks": affected }))
         }
         other => Err(CoreError::NotFound(format!("tool {other}"))),
     }
