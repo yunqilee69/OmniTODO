@@ -83,13 +83,11 @@ export default function SubtaskRows({
   }
 
   const byParent = subtreeChildren(parentId, data ?? []);
-  if (!byParent.has(parentId)) {
-    return (
-      <li className="py-1.5 pr-3 text-meta" style={{ ...PLACEHOLDER_STYLE, color: "var(--text-tertiary)" }}>
-        没有子任务
-      </li>
-    );
-  }
+  // No children means there is nothing to show. The usual cause is that the last
+  // child was just deleted: the parent is only still in the list's expanded set
+  // because it was expanded a moment ago, and a "没有子任务" line there would
+  // leave a stray row sitting in the list behind the delete.
+  if (!byParent.has(parentId)) return null;
 
   const rowProps = (task: TaskDto, depth: number, hasBranch: boolean): TaskRowProps => ({
     task: withBranch(task, hasBranch),

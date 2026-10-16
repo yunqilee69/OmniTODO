@@ -8,6 +8,9 @@ import TaskRow, { type TaskRowProps } from "./TaskRow";
 export default function SortableTaskRow(props: TaskRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.task.id,
+    // The drop context draws its line from the hovered row's own rule (which
+    // moves one indent step per level), so the row publishes its depth.
+    data: { depth: props.depth ?? 0 },
   });
 
   return (

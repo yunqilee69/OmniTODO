@@ -26,7 +26,7 @@ import { useState, type ReactNode } from "react";
 import { api, type Page, type TaskDto } from "../api/client";
 import { qk } from "../api/queryKeys";
 import { ROW_INDENT_STEP, rowRuleInset } from "../lib/layout";
-import { resolveDropIntent, nestMove, type DropIntent, type DropTarget } from "../lib/nestDrop";
+import { planDrop, resolveDropIntent, type DropIntent, type DropTarget } from "../lib/nestDrop";
 import { reorderSubsequence } from "../lib/reorder";
 
 /** Droppable id for a sidebar project row. */
@@ -143,13 +143,16 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
     if (pointerY === null || !rect) return;
     const intent = resolveDropIntent(pointerY, rect.height, event.delta.x);
     setDropTarget({ overId, intent });
-    // A child slot's line starts one indent step in from the row's own rule,
-    // which is the same place the new child's title will sit.
+    // The line sits on the hovered row's own rule — one indent step in per level
+    // — and a child slot's is one step further in, where the new child's title
+    // will land.
+    const depth = event.over?.data.current?.depth;
+    const rule = rowRuleInset(typeof depth === "number" ? depth : 0);
     const inset = intent === "child" ? ROW_INDENT_STEP : 0;
     setDropLine({
       top: rect.top + (intent === "before" ? 0 : rect.height),
-      left: rect.left + rowRuleInset(0) + inset,
-      width: Math.max(0, rect.right - (rect.left + rowRuleInset(0) + inset)),
+      left: rect.left + rule + inset,
+      width: Math.max(0, rect.right - (rect.left + rule + inset)),
       child: intent === "child",
     });
   };
@@ -184,7 +187,13 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
     // the patch, and the core then pulls the subtree into the parent's project.
     if (intent === "child") {
       if (!findCachedTask(qc, overId)) return;
-      await api.taskUpdate(activeId, { parent_id: overId, sort_order: 0 });
+      try {
+        await api.taskUpdate(activeId, { parent_id: overId, sort_order: 0 });
+      } catch {
+        // Refused by the core (the row is inside the dragged task's own
+        // subtree, or the branch would pass the depth cap): leave it alone.
+        return;
+      }
       qc.invalidateQueries({ queryKey: qk.tasksAll });
       qc.invalidateQueries({ queryKey: qk.subtasksAll });
       qc.invalidateQueries({ queryKey: qk.taskAll });
@@ -192,25 +201,56 @@ export function TaskDndProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Otherwise it stays a sibling: persist the new manual order of that group.
-    const group = findCachedSiblings(qc, activeId);
-    if (!group || !group.ids.includes(overId)) return;
-    const next = nestMove(group.ids, activeId, overId, intent);
-    if (!next) return;
+    // Otherwise it lands *beside the hovered row*, sharing that row's parent.
+    // Landing beside a shallower row is how a subtask comes back out: dropped on
+    // a top-level row — or on its own parent row — it becomes a top-level task
+    // again instead of staying filed under its old parent. Within one group the
+    // parent does not change and this is a plain reorder.
+    const over = findCachedTask(qc, overId);
+    const active = findCachedTask(qc, activeId);
+    const group = findCachedSiblings(qc, overId);
+    if (!over || !active || !group) return;
+    const plan = planDrop({
+      activeId,
+      activeParent: active.parent_id ?? null,
+      overId,
+      overParent: over.parent_id ?? null,
+      groupIds: group.ids,
+      intent,
+    });
+    if (!plan) return;
 
-    // Show the new order straight away; the refetch below confirms it. A
-    // subtask group is a subsequence of its branch cache, so only the group's
-    // own slots move.
+    // Show the new order straight away; the refetch below confirms it. A subtask
+    // group is a subsequence of its branch cache, so only the group's own slots
+    // move. A task arriving from another group is not in that cache yet, so the
+    // optimistic pass skips it and the refetch places the row.
+    const reparented = plan.parent !== undefined;
     const scope = group.scope === "tasks" ? qk.tasksAll : qk.subtasksAll;
     qc.setQueriesData<CachedTasks>({ queryKey: scope }, (data) => {
       const items = cachedItems(data);
       if (!items.some((t) => t.id === activeId)) return data;
-      const nextItems = reorderSubsequence(items, next);
+      const nextItems = reorderSubsequence(items, plan.order);
       return Array.isArray(data) ? nextItems : data ? { ...data, items: nextItems } : data;
     });
-    await api.taskReorder(next);
+
+    try {
+      if (reparented) {
+        await api.taskUpdate(
+          activeId,
+          plan.parent ? { parent_id: plan.parent } : { clear_parent_id: true },
+        );
+      }
+      await api.taskReorder(plan.order);
+    } catch {
+      // The core refused the move — into the task's own subtree, or past the
+      // depth cap. The refetch below puts the row back where it came from.
+    }
     qc.invalidateQueries({ queryKey: qk.tasksAll });
     qc.invalidateQueries({ queryKey: qk.subtasksAll });
+    if (reparented) {
+      qc.invalidateQueries({ queryKey: qk.taskAll });
+      qc.invalidateQueries({ queryKey: qk.projects });
+    }
   };
 
   return (

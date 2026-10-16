@@ -8,8 +8,14 @@
 //! - the bottom band, pushed one indent step further right, files the dragged
 //!   task as the row's first child.
 //!
+//! "Sibling" is relative to the row under the pointer, not to the dragged task's
+//! current parent: the dragged task ends up sharing the hovered row's parent. So
+//! landing beside a shallower row lifts it a level, and dropping a subtask on a
+//! top-level row — or on its own parent row — brings it back out as a top-level
+//! task. The same rule reorders within a group, where the parent is unchanged.
+//!
 //! That is the whole distinction the drop line has to draw: a line at the row's
-//! indent is a sibling, a line one step shorter (further inset) is a child.
+//! indent is a sibling, a line one step further inset is a child.
 
 import { ROW_INDENT_STEP } from "./layout";
 
@@ -50,11 +56,16 @@ export function resolveDropIntent(offsetY: number, height: number, dragDx: numbe
 }
 
 /**
- * The new sibling order after dropping `activeId` relative to `overId`.
+ * The new order of `ids` after dropping `activeId` relative to `overId`.
  *
- * `null` means the drop changes nothing (missing ids, or a no-op landing).
- * A `"child"` intent is not an order change of this group — the caller
- * reparents instead — so it comes back `null` here too.
+ * `activeId` need not be in `ids`: a task dropped beside a row of another group
+ * joins that group, taking its parent. That is how a subtask comes back out —
+ * dropped on a shallower row it lands beside it instead of staying filed under
+ * its old parent — so the newcomer is spliced in rather than moved within.
+ *
+ * `null` means the drop changes nothing (unknown `overId`, a no-op landing, or
+ * an unchanged order). A `"child"` intent is not an order change of this group
+ * — the caller reparents instead — so it comes back `null` here too.
  */
 export function nestMove(
   ids: readonly string[],
@@ -63,13 +74,51 @@ export function nestMove(
   intent: DropIntent,
 ): string[] | null {
   if (intent === "child" || activeId === overId) return null;
-  const from = ids.indexOf(activeId);
-  const over = ids.indexOf(overId);
-  if (from < 0 || over < 0) return null;
-  const next = ids.filter((id) => id !== activeId);
+  if (!ids.includes(overId)) return null;
+  const rest = ids.includes(activeId) ? ids.filter((id) => id !== activeId) : [...ids];
   // After the removal, "after overId" is one past wherever `overId` ended up.
-  let to = next.indexOf(overId);
+  let to = rest.indexOf(overId);
   if (intent === "after") to += 1;
-  next.splice(to, 0, activeId);
-  return next.join() === ids.join() ? null : next;
+  rest.splice(to, 0, activeId);
+  return rest.join() === ids.join() ? null : rest;
+}
+
+/** What a sibling drop writes: the group's new order, and the parent that order
+ *  implies. */
+export interface DropPlan {
+  /** The hovered row's group, with the dragged task spliced in. */
+  order: string[];
+  /** The new parent: an id to file under it, `null` for the top level, or
+   *  `undefined` when the drop does not change the task's parent. */
+  parent: string | null | undefined;
+}
+
+/**
+ * Plan a sibling drop.
+ *
+ * The dragged task lands beside the row under the pointer and takes that row's
+ * parent — so a subtask dropped beside a top-level row (or beside its own parent
+ * row) plans `parent: null`, which is the write that lifts it back out to the
+ * top level. Within one group the parent is unchanged and `parent` is
+ * `undefined`, leaving the drop a plain reorder.
+ *
+ * `null` means there is nothing to do: the drop would make the task its own
+ * child, or it changes nothing. Cycles deeper than that — into the task's own
+ * subtree, or past the depth cap — are the core's to refuse, because only it
+ * knows the full tree.
+ */
+export function planDrop(args: {
+  activeId: string;
+  activeParent: string | null;
+  overId: string;
+  overParent: string | null;
+  /** The hovered row's sibling group, in display order. */
+  groupIds: readonly string[];
+  intent: DropIntent;
+}): DropPlan | null {
+  const { activeId, activeParent, overId, overParent, groupIds, intent } = args;
+  if (overParent === activeId) return null;
+  const order = nestMove(groupIds, activeId, overId, intent);
+  if (!order) return null;
+  return { order, parent: overParent === activeParent ? undefined : overParent };
 }

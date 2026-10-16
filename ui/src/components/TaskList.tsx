@@ -96,7 +96,12 @@ export default function TaskList({
   );
 
   const tasks = data?.items ?? [];
-  const virtual = shouldVirtualize(tasks.length, sortable) && expanded.size === 0;
+  // An expanded *branch* is what breaks the window's row count, not the
+  // expanded set: an id left over from a row whose last subtask was deleted has
+  // no branch to render, so it must not keep the list un-windowed.
+  const virtual =
+    shouldVirtualize(tasks.length, sortable) &&
+    !tasks.some((t) => expanded.has(t.id) && t.has_subtasks);
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: virtual ? tasks.length : 0,
