@@ -30,7 +30,13 @@ export default function TaskListView({ title, variant }: { title: string; varian
     <section className="flex h-full min-h-0 flex-col">
       <PageHeader title={title} />
       <PageContent taskList>
-        <TaskList filter={filter} onOpenTask={selectTask} emptyHint={EMPTY_HINT[variant]} />
+        <TaskList
+          filter={filter}
+          onOpenTask={selectTask}
+          emptyHint={EMPTY_HINT[variant]}
+          // These three lists cut across projects, so each row names its own.
+          showProject
+        />
       </PageContent>
     </section>
   );

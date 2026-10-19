@@ -1,11 +1,24 @@
 import { useDroppable } from "@dnd-kit/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App as AntApp, Button, Dropdown, Input, Menu, Modal, Tooltip, type MenuProps } from "antd";
+import {
+  App as AntApp,
+  Button,
+  Dropdown,
+  Input,
+  Menu,
+  Modal,
+  Tooltip,
+  Typography,
+  type MenuProps,
+} from "antd";
 import { useState, type CSSProperties } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, type ProjectDto } from "../api/client";
 import { qk } from "../api/queryKeys";
+import { nextProjectColor, PROJECT_COLORS } from "../lib/projectColors";
+import { useUiStore } from "../stores/ui";
 import { projectDropId } from "./DndProvider";
+import ProjectColorPicker from "./ProjectColorPicker";
 import {
   BulbOutlined,
   CalendarOutlined,
@@ -61,7 +74,15 @@ function ProjectLabel({
   onEdit: (project: ProjectDto) => void;
   onDelete: (project: ProjectDto) => void;
 }) {
-  const { isOver, setNodeRef } = useDroppable({ id: projectDropId(project.id) });
+  const railCollapsed = useUiStore((s) => s.sidebarCollapsed);
+  const { isOver, setNodeRef } = useDroppable({
+    id: projectDropId(project.id),
+    // A hidden rail still has layout: its rows keep real rectangles under the
+    // clipped edge, and the app-level drop resolves by nearest centre, not by
+    // the pointer. Left enabled, a task could be filed into a project the user
+    // cannot see.
+    disabled: railCollapsed,
+  });
   const [reveal, setReveal] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const shown = reveal || menuOpen;
@@ -141,9 +162,11 @@ export default function NavMenu() {
   const qc = useQueryClient();
   const { modal, message } = AntApp.useApp();
   const [name, setName] = useState("");
+  const [newColor, setNewColor] = useState<string>(PROJECT_COLORS[0]);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<ProjectDto | null>(null);
   const [editName, setEditName] = useState("");
+  const [editColor, setEditColor] = useState<string>(PROJECT_COLORS[0]);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem(PROJECTS_COLLAPSED_KEY) === "1";
@@ -167,8 +190,12 @@ export default function NavMenu() {
   const { data: projects } = useQuery({ queryKey: qk.projects, queryFn: () => api.projectList() });
   const { data: tags } = useQuery({ queryKey: qk.tags, queryFn: () => api.tagList() });
 
+  /** The colour a project about to be created should default to: the first
+   *  palette entry no existing project has claimed. */
+  const freeColor = () => nextProjectColor((projects ?? []).map((p) => p.color));
+
   const create = useMutation({
-    mutationFn: (n: string) => api.projectCreate(n),
+    mutationFn: (v: { name: string; color: string }) => api.projectCreate(v.name, v.color),
     onSuccess: () => {
       setName("");
       setAdding(false);
@@ -177,7 +204,8 @@ export default function NavMenu() {
   });
 
   const rename = useMutation({
-    mutationFn: (v: { id: string; name: string }) => api.projectUpdate(v.id, { name: v.name }),
+    mutationFn: (v: { id: string; name: string; color: string }) =>
+      api.projectUpdate(v.id, { name: v.name, color: v.color }),
     onSuccess: () => {
       setEditing(null);
       qc.invalidateQueries({ queryKey: qk.projects });
@@ -196,6 +224,21 @@ export default function NavMenu() {
   const startEdit = (project: ProjectDto) => {
     setEditing(project);
     setEditName(project.name);
+    // A project with no colour yet starts on the one it would be given anyway,
+    // so saving the dialog (which writes the colour) is a visible change and not
+    // a silent one.
+    setEditColor(project.color ?? freeColor());
+  };
+
+  /** Opens the inline "new project" field on a colour nothing else is using. */
+  const startAdd = () => {
+    setNewColor(freeColor());
+    setAdding(true);
+  };
+
+  const saveEdit = () => {
+    if (!editing || !editName.trim()) return;
+    rename.mutate({ id: editing.id, name: editName.trim(), color: editColor });
   };
 
   /** Deleting a project takes its tasks with it (design §5.7), so confirm first. */
@@ -262,7 +305,9 @@ export default function NavMenu() {
                   placeholder="项目名，回车确认"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  onPressEnter={() => name.trim() && create.mutate(name.trim())}
+                  onPressEnter={() =>
+                    name.trim() && create.mutate({ name: name.trim(), color: newColor })
+                  }
                   onBlur={() => !name.trim() && setAdding(false)}
                   onKeyDown={(e) => {
                     if (e.key === "Escape") {
@@ -299,7 +344,7 @@ export default function NavMenu() {
                   e.stopPropagation();
                   // Adding a project implies wanting to see the list it lands in.
                   if (collapsed) toggleCollapsed();
-                  setAdding(true);
+                  startAdd();
                 }}
               />
             </Tooltip>
@@ -368,16 +413,30 @@ export default function NavMenu() {
         cancelText="取消"
         confirmLoading={rename.isPending}
         okButtonProps={{ disabled: !editName.trim() }}
-        onOk={() => editing && rename.mutate({ id: editing.id, name: editName.trim() })}
+        onOk={() => saveEdit()}
         onCancel={() => setEditing(null)}
       >
-        <Input
-          autoFocus
-          value={editName}
-          placeholder="项目名"
-          onChange={(e) => setEditName(e.target.value)}
-          onPressEnter={() => editing && editName.trim() && rename.mutate({ id: editing.id, name: editName.trim() })}
-        />
+        <div className="flex flex-col gap-3">
+          <Input
+            autoFocus
+            value={editName}
+            placeholder="项目名"
+            onChange={(e) => setEditName(e.target.value)}
+            onPressEnter={() => saveEdit()}
+          />
+          {/* The same swatch the project is drawn with everywhere else: the dot
+              in the rail, the block on the calendar, the chip on a row in a view
+              that spans projects. */}
+          <div className="flex items-center gap-2">
+            <Typography.Text type="secondary" className="text-xs">
+              颜色
+            </Typography.Text>
+            <ProjectColorPicker value={editColor} onChange={setEditColor} />
+            <Typography.Text type="secondary" className="text-xs">
+              在日历、标签等跨项目视图里用它区分这个项目的任务
+            </Typography.Text>
+          </div>
+        </div>
       </Modal>
     </div>
   );

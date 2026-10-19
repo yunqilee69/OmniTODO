@@ -696,9 +696,12 @@ function buildHandlers(): Record<string, (args: Record<string, unknown>) => unkn
     materialize_due: () => 0,
     // Materialised occurrences only — the mock has no recurrence engine, so the
     // virtual-occurrence half of the calendar is exercised against the core.
+    // Like the core, it lists open work only, and names each item's project so
+    // the blocks can be coloured by it.
     calendar: ({ from, to, projectId }) =>
       tasks
         .filter((t) => (projectId == null ? true : t.project_id === projectId))
+        .filter((t) => t.status !== "done" && t.status !== "cancelled")
         .filter((t) => {
           const at = t.due_at ?? t.start_at;
           return at != null && at >= Number(from) && at <= Number(to);
@@ -706,6 +709,7 @@ function buildHandlers(): Record<string, (args: Record<string, unknown>) => unkn
         .map((t) => ({
           task_id: t.id,
           series_id: t.series_id,
+          project_id: t.project_id,
           title: t.title,
           start_at: t.start_at,
           due_at: t.due_at,

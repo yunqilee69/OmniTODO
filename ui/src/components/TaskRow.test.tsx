@@ -115,6 +115,34 @@ describe("TaskRow leading gutters", () => {
   });
 });
 
+describe("TaskRow project chip", () => {
+  it("is absent unless the list spans projects", () => {
+    render(<TaskRow task={task({ project_id: "p1" })} />);
+    expect(screen.queryByText("装修新家")).not.toBeInTheDocument();
+  });
+
+  it("names the project and carries its colour", () => {
+    const { container } = render(
+      <TaskRow task={task({ project_id: "p1" })} project={{ name: "装修新家", color: "#0E6E63" }} />,
+    );
+    expect(screen.getByText("装修新家")).toBeInTheDocument();
+    const dot = container.querySelector('span[aria-hidden="true"].rounded-full') as HTMLElement;
+    expect(dot.style.background).toBe("rgb(14, 110, 99)");
+  });
+
+  it("keeps a neutral dot for a project with no colour yet", () => {
+    const { container } = render(
+      <TaskRow task={task({ project_id: "p1" })} project={{ name: "示例项目", color: null }} />,
+    );
+    expect(screen.getByText("示例项目")).toBeInTheDocument();
+    // No colour picked: the hairline token stands in rather than an invented hue.
+    expect(
+      (container.querySelector('span[aria-hidden="true"].rounded-full') as HTMLElement).style
+        .background,
+    ).toBe("var(--border-hairline)");
+  });
+});
+
 describe("TaskRow due date", () => {
   // An all-day due date is a civil date (UTC midnight), so the fixtures have to
   // be built the same way the app stores them.

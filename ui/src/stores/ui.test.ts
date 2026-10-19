@@ -11,4 +11,14 @@ describe("ui store", () => {
     expect(s.filter.limit).toBe(10);
     expect(s.selectedTaskId).toBe("abc");
   });
+
+  it("collapses the sidebar and persists it", () => {
+    useUiStore.getState().toggleSidebar();
+    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
+    expect(localStorage.getItem("omnitodo.sidebar.collapsed")).toBe("1");
+
+    useUiStore.getState().setSidebarCollapsed(false);
+    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
+    expect(localStorage.getItem("omnitodo.sidebar.collapsed")).toBe("0");
+  });
 });

@@ -13,6 +13,7 @@ import {
   type TaskPatch,
 } from "../api/client";
 import { qk } from "../api/queryKeys";
+import { useProjectIndex } from "../hooks/useProjectIndex";
 import { useTaskMutations } from "../hooks/useTaskMutations";
 import { shouldVirtualize } from "../lib/list";
 import { groupBySection, NO_SECTION, type SectionGroup } from "../lib/sections";
@@ -71,6 +72,11 @@ export interface TaskListProps {
    *  sections are structural to a project, and Today / Upcoming / search cut
    *  across projects, where a section heading would say nothing. */
   grouping?: SectionGrouping;
+  /** Name each row's project (design §13.1) — the project's colour dot plus its
+   *  name under the title. On for the views that mix projects in one list
+   *  (Inbox / Today / Upcoming / a tag / search); off inside a project view,
+   *  where the header already answers the question for every row. */
+  showProject?: boolean;
 }
 
 /**
@@ -103,6 +109,7 @@ export default function TaskList({
   query,
   enabled = true,
   grouping,
+  showProject = false,
 }: TaskListProps) {
   const { data, isLoading, error } = useQuery({
     queryKey: query?.key ?? qk.tasks(filter),
@@ -111,6 +118,7 @@ export default function TaskList({
   });
   const { modal } = AntApp.useApp();
   const { toggle, patch, remove } = useTaskMutations();
+  const projects = useProjectIndex();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   /** Which group's inline composer is open; `NO_SECTION` for the unfiled one. */
   const [composing, setComposing] = useState<string | null>(null);
@@ -140,16 +148,20 @@ export default function TaskList({
     [modal, remove],
   );
 
-  const rowProps = (task: TaskDto): TaskRowProps => ({
-    task,
-    highlight,
-    onOpen: onOpenTask,
-    onToggle: (t: TaskDto) => toggle.mutate(t),
-    onPatch: (id: string, p: TaskPatch) => patch.mutate({ id, patch: p }),
-    onDelete: confirmDelete,
-    expanded: expanded.has(task.id),
-    onToggleExpand: toggleExpand,
-  });
+  const rowProps = (task: TaskDto): TaskRowProps => {
+    const owner = showProject && task.project_id ? projects.get(task.project_id) : undefined;
+    return {
+      task,
+      highlight,
+      onOpen: onOpenTask,
+      onToggle: (t: TaskDto) => toggle.mutate(t),
+      onPatch: (id: string, p: TaskPatch) => patch.mutate({ id, patch: p }),
+      onDelete: confirmDelete,
+      expanded: expanded.has(task.id),
+      onToggleExpand: toggleExpand,
+      project: owner ? { name: owner.name, color: owner.color } : null,
+    };
+  };
 
   const branch = (task: TaskDto): ReactNode =>
     expanded.has(task.id) ? (

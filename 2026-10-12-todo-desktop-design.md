@@ -201,7 +201,7 @@ CREATE TABLE projects (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
   description TEXT,
-  color       TEXT,                      -- #RRGGBB
+  color       TEXT,                      -- #RRGGBB；UI 从固定十色板取值（DESIGN.md §3.6），NULL = 未选色（画中性点，不猜）
   icon        TEXT,                      -- emoji 或图标名
   sort_order  INTEGER NOT NULL DEFAULT 0,
   is_archived INTEGER NOT NULL DEFAULT 0,
@@ -709,7 +709,7 @@ omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 | `list_due_reminders` | 未来提醒计划（含重复展开）。返回 `{items, count}` |
 | `list_attachments` | 附件元数据（文件名、大小、sha256、blob/managed、托管路径；**不返回二进制**）。返回 `{items, count}` |
 | `summary_report` | §10 的聚合报告（**核心**） |
-| `list_calendar` | 窗口内的日历项（已物化任务 + 虚拟重复实例）。返回 `{items, count}`；可选 `project_id` 收窄到单个项目 |
+| `list_calendar` | 窗口内的日历项（已物化任务 + 虚拟重复实例）。**只列未完成的**（默认口径同 `list_tasks`）；重复锚点已勾掉时，还没到的期次仍然列出。返回 `{items, count}`；可选 `project_id` 收窄到单个项目；每项带 `project_id`，供跨项目视图按项目色上色 |
 | `export_tasks` | 按过滤条件导出 JSON/CSV/Markdown（仅序列化，不落盘）。过滤与默认范围同 `list_tasks` |
 
 **过滤参数**（`list_tasks`/`search_tasks`/`export_tasks` 共用，扁平传入，不需要包进 `filter` 对象）：
@@ -813,8 +813,8 @@ omnitodo-mcp --http --port 8787 --token <token>          # 仅监听 127.0.0.1
 ### 13.1 视图
 
 - **Inbox / Today / Upcoming**：默认筛选的三条快捷入口。
-- **Calendar**：月/周视图，展示 `start_at`/`due_at`；未来重复期次为**虚拟展开（只读）**，已物化期次可拖拽改期。项目视图内的日历带上 `project_id`（§8.1），只显示该项目的期次。
-- **Project 视图**：左侧项目列表（含计数），右侧在**列表 / 看板 / 日历**三种模式间切换（选择存在 `ui.project.view_mode`）：
+- **Calendar**：月/周视图，展示 `start_at`/`due_at`；**只显示未完成的期次**（已完成/已取消不出现，与 `list_calendar` 同口径），未来重复期次为**虚拟展开（只读）**，已物化期次可拖拽改期。项目视图内的日历带上 `project_id`（§8.1），只显示该项目的期次。跨项目的日历按项目的主题色给每块上色（左缘 3px 实色条 + 16% 淡底），无项目或项目未选色时退回 `--accent`。
+- **Project 视图**：左侧项目列表（含每个项目的**主题色点**与计数），右侧在**列表 / 看板 / 日历**三种模式间切换（选择存在 `ui.project.view_mode`）。项目主题色从固定十色板里选（新建项目自动取一个尚未被占用的色，改色在「编辑项目」弹窗里），它贯穿侧栏、跨项目视图（Inbox / Today / Upcoming / Tag / Search 的任务行带项目色点 + 项目名）与日历：
   - **列表**：按板块分组的任务列表——`[无板块, ...板块]`，每组一个可折叠标题（名称 + 计数 + 悬停「＋」直接在该板块新建任务 + `⋯` 菜单：重命名 / 上移 / 下移 / 删除），末尾一行「添加板块」。
   - **看板**：一列一个板块，列宽 286px，顺序为 `[无板块, ...板块, 添加板块]`；卡片只渲染顶层任务，显示日期、`#标签` 与子任务进度；列头为「名称 + 计数 + 拖动手柄 + `⋯`」，列脚为「添加任务」。
   - **日历**：`CalendarBoard` 的嵌入式实例，按项目过滤。

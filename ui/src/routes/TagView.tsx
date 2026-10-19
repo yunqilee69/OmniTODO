@@ -21,7 +21,10 @@ export default function TagView() {
     <section className="flex h-full min-h-0 flex-col">
       <PageHeader title={`#${tag?.name ?? "标签"}`} meta={tag ? `${tag.count} 项` : undefined} />
       <PageContent taskList>
-        <TaskList filter={filter} onOpenTask={selectTask} emptyHint="这个标签下没有任务" />
+        {/* A tag cuts across projects, so each row says which one it came from
+            — and carries that project's colour, the point of the tag view being
+            able to tell two projects' work apart. */}
+        <TaskList filter={filter} onOpenTask={selectTask} emptyHint="这个标签下没有任务" showProject />
       </PageContent>
     </section>
   );

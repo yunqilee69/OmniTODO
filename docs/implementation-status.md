@@ -1,3 +1,85 @@
+## 2026-10-16 项目主题色 + 日历只画未完成的事
+
+两件事一起做，因为它们是同一个问题的两半：跨项目视图里「这条属于谁」要看得见。
+
+- **项目色早就有完整数据通路，缺的只是入口**：`projects.color`（TEXT/Nullable）→ `domain::Project` /
+  `ProjectPatch` → `api.projectCreate(name, color)` / `api.projectUpdate(id, {name, color})` 一路都在，
+  MCP 与 CLI 也早就能读写；UI 上此前没有任何地方能改它，所以库里这个字段几乎永远是 NULL。
+  这次把入口补在侧栏「编辑项目」弹窗里，新建项目时也一并带上。
+- **色板是固定的十色，不是自由取色盘**（`ui/src/lib/projectColors.ts`，设计 §3.6）：项目色要以
+  8px 圆点和 16% 淡底两种形态在纸白与炭黑两套底色上都读得出来，而这个应用只有一个信号色
+  （仪表绿）加一层优先级色阶——放开自由取色，很容易挑到跟这两者撞车的颜色，反而失掉「一眼分得开」。
+  新建时取 `nextProjectColor()`＝色板里第一个没被占用的色（不是按项目数量取模）：两个项目撞色就
+  违背了配色的唯一目的。十色全占满才回落到取模。
+- **不用 antd 的 `ColorPicker`**：它的触发态是个不可聚焦的 `div`（`pickAttrs(rest)` 只透传
+  `data-*`/`aria-*`），键盘 Tab 不到；而这里要的正是一个能 Tab 到、能读出当前色的按钮。
+  自建 `ProjectColorPicker.tsx`：真 `Button`（`aria-label`/`title` 带当前色）触发，`Popover` 里
+  十个 `role="radio"` 按钮组成 `role="radiogroup"`，选中项打勾，选完即关。
+- **无色项目不猜色**：`color` 为 NULL 的项目继续画中性发丝点，不替它挑一个——存量库里可能已经有
+  几十个无色项目，自动上色等于替用户做了一堆他没做过的决定，还得在界面上解释为什么。
+- **跨项目视图靠 `useProjectIndex()`**（`ui/src/hooks/useProjectIndex.ts`，复用 `qk.projects` 缓存）
+  把 `project_id` 解析成名字与颜色：收件箱 / 今天 / 即将到来 / 标签 / 搜索的任务行前面加
+  项目色点 + 项目名（`TaskRow` 的 `project` prop，由 `TaskList` 的 `showProject` 开关打开）。
+  项目视图自己**不**打开这个开关——那一页每行的答案都一样；子任务也不显示——分支属于父任务的项目。
+- **日历「已完成不显示」放在 core，不是前端藏**：`service/calendar.rs` 改传
+  `TaskFilter { include_completed: false, .. }`（落到 SQL 就是 `status NOT IN ('done','cancelled')`）。
+  `list_calendar` 的语义本来就是「还有什么要做」，前端过滤会让 MCP 与 CLI 拿到不一样的答案。
+  MCP 的 `list_calendar` 描述同步改成 `Finished work is not listed: only open tasks appear`。
+- **但「完成一期」不等于「整个系列结束」**：重复任务的锚点被勾掉后，**还没到的期次仍然要显示**——
+  否则周日勾掉「每周五交周报」，日历上往后所有周报就一起消失了。这一点专门补了回归测试
+  `calendar_keeps_future_occurrences_of_a_finished_anchor`。
+- **日历项带上 `project_id` 才谈得上上色**：`CalendarItemDto` 增 `project_id: Option<Id>`，锚点查询
+  改成 `SELECT id, project_id ...`，虚拟期次继承锚点的项目（它自己不是一条真任务）。月/周网格里
+  每一块按项目色画：实体期次是 16% 淡底 + 左缘 3px 实色条，虚拟期次是虚线边 + 55% 半透明的左条，
+  两者的区别（「已排期」与「还没排」）不因为上了色就看不出来。正在拖的 `DragOverlay` 块带同一套颜色。
+- `embedded` 模式（项目视图内嵌的日历）照样上色，但不在 tooltip 里重复项目名——那一页的项目是已知的。
+
+验证：`cargo test --workspace` **48 + 10 passed**；`cargo clippy --workspace --all-targets -- -D warnings`
+干净；`cd ui && npx tsc --noEmit` 干净；`npx vitest run` **171 passed / 23 文件**（新增
+`lib/projectColors.test.ts` 5 例、`TaskRow.test.tsx` 的 project chip 3 例、`NavMenu.test.tsx`
+的配色 2 例）；`npm run build` 成功。真浏览器在 `dev-preview.html`（stub IPC）上核对：编辑器色板
+十色可选、选中后触发点变色、Popover 收起；标签视图的任务行显示色点 + 项目名；给另一项目的任务
+排上日期后，日历同一天并排出现两个不同色的块（一红一绿）；把一个已排期任务勾成完成 → 强制刷新
+→ 它从日历上消失。
+未做：README 截图未重生成（本机只有 Firefox，出的图与现有 Chrome 截图风格不一致，宁可留旧图）。
+
+## 2026-10-16 侧边栏可收起（收起按钮在 rail，展开按钮在视图顶栏最左）
+
+- **两个半区、一处状态**：`ui/src/components/SidebarToggle.tsx` 一个组件两种 `variant`，
+  rail 里的 `collapse` 挂在 wordmark 行右端（`ml-auto`），顶栏里的 `expand` 是 `PageHeader`
+  的第一个子元素——即标题（项目视图里是项目名）左边。哪一半当前不可达就不进 DOM，而不是
+  用样式藏起来：rail 收起到 0 宽后，里面残留的按钮仍是 Tab 站，焦点会掉进一个看不见的地方。
+- **状态在 `ui` store，不落 `settings`**：`sidebarCollapsed` + `setSidebarCollapsed/toggleSidebar`，
+  写 `localStorage.omnitodo.sidebar.collapsed`（与 `NavMenu` 的项目分组折叠同一套做法）。理由：
+  这是设备本地偏好，跟着机器走而不是跟着库走，不需要跨端同步。
+- **rail 不变形，只被裁掉**：`Layout.Sider` 传 `collapsedWidth={0}` + `trigger={null}`
+  （antd 自带的 zero-width 把手不要），内层容器固定 `width: 264`、外层 `overflow: hidden`。
+  否则收起/展开的 200ms 里每一帧都在改宽度，项目名会逐帧重排成一团再散开。
+- **日历自带顶栏**：`Calendar` 路由不走 `PageHeader`，所以 `CalendarBoard` 的非 `embedded`
+  分支自己放一个展开按钮；项目内嵌的日历已经在项目视图的顶栏之下，不重复放。
+- **顺带修掉一个会"静默改错数据"的口子**：rail 收起后仍挂载，里面的项目行 droppable 仍持有
+  真实矩形（`overflow` 裁剪不影响 `getBoundingClientRect`），而应用级落点用的是
+  `closestCenter`——按"最近中心"判定，不看指针在不在目标上。原样保留的话，把任务拖到列表
+  左半边就可能被收进一个看不见的项目。`ProjectLabel` 的 `useDroppable` 现在带
+  `disabled: railCollapsed`，回归用例 `ui/src/components/NavMenu.test.tsx` 直接读 dnd-kit
+  的 droppable 注册表断言这个标志（收起 → disabled，展开 → 恢复）。
+
+验证：`cd ui && npx tsc --noEmit` 干净；`npx vitest run` **161 passed / 22 文件**（新增
+`SidebarToggle.test.tsx` 2 例、`NavMenu.test.tsx` 1 例，`stores/ui.test.ts` 加 1 例）；
+`npm run build` 成功（产物仍约 1.54 MB / gzip 496 KB）。真浏览器在
+`http://localhost:5173/dev-preview.html`（stub IPC）上核对：点 rail 里的收起按钮 → rail 实测
+0 宽、`localStorage` 写 `1`、顶栏出现展开按钮且位于项目名左侧（x=24 对 62，同一行）；
+点展开 → 恢复 264 宽、`localStorage` 回 `0`；以 `1` 重载 → 打开即收起、顶栏按钮在；`/calendar`
+路由下按钮确实是自带顶栏的第一个子元素。
+
+> 注意：这台机器上 `npx vitest run` 用 Node 21.7.3 会挂在 `@ant-design/icons` 的 CJS 构建
+> `require("@ant-design/colors/es/generate")` 上（5 个渲染 antd 的用例文件整文件报
+> "Cannot use import statement outside a module"，HEAD 上同样复现，与本次改动无关）。
+> 换 Node 24 运行即全绿——Node ≥ 22.12 默认支持 `require(esm)`。
+> 另外本次真浏览器验收时，内置浏览器的渲染帧一度停摆（2 秒内 `requestAnimationFrame` 回调
+> 0 次），表现为 Playwright 的定位器点击一直等"元素稳定"而超时、截图超时；改用坐标点击与
+> 状态直读绕过，未做真实拖拽验收（拖拽本身也依赖 rAF）。
+
 ## 2026-10-16 看板 / 日历 / 板块 / 任务详情弹窗（对照 Todoist 移植）
 
 四件互相关联的东西一起做，因为「板块」是另外三件的地基：Todoist 的看板列就是板块，

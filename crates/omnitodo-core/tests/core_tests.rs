@@ -1755,9 +1755,65 @@ async fn calendar_can_be_scoped_to_one_project() {
 
     let all = core.calendar(now, now + 2 * DAY, None).await.unwrap();
     assert_eq!(all.len(), 2);
+    // Each item names its project, which is what the calendar colours by.
+    let owners: Vec<Option<&str>> = all.iter().map(|i| i.project_id.as_deref()).collect();
+    assert!(owners.contains(&Some(p.id.as_str())), "{owners:?}");
+    assert!(owners.contains(&Some(other.id.as_str())), "{owners:?}");
     let mine = core.calendar(now, now + 2 * DAY, Some(&p.id)).await.unwrap();
     assert_eq!(mine.len(), 1);
     assert_eq!(mine[0].title, "mine");
+}
+
+#[tokio::test]
+async fn calendar_lists_open_work_only() {
+    let (core, _d) = core().await;
+    let now = now_ms();
+    let done = core
+        .create_task(CreateTaskInput {
+            title: "finished".into(),
+            due_at: Some(now + DAY),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    core.create_task(CreateTaskInput {
+        title: "still open".into(),
+        due_at: Some(now + DAY),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    core.complete_task(&done.id).await.unwrap();
+
+    let items = core.calendar(now, now + 2 * DAY, None).await.unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].title, "still open");
+}
+
+/// Finishing one occurrence does not finish the series, so a recurring task whose
+/// first occurrence is ticked off still shows its future occurrences.
+#[tokio::test]
+async fn calendar_keeps_future_occurrences_of_a_finished_anchor() {
+    let (core, _d) = core().await;
+    let anchor = now_ms() - DAY;
+    let created = core
+        .create_task(CreateTaskInput {
+            title: "weekly review".into(),
+            due_at: Some(anchor),
+            recurrence_rule: Some("FREQ=DAILY".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    core.complete_task(&created.id).await.unwrap();
+
+    let items = core
+        .calendar(anchor, anchor + 3 * DAY, None)
+        .await
+        .unwrap();
+    assert!(items.iter().all(|i| i.virtual_occurrence));
+    assert!(items.len() >= 3, "future occurrences must survive: {items:?}");
+    assert_eq!(items[0].status, Status::Todo);
 }
 
 #[tokio::test]

@@ -70,6 +70,12 @@ export interface TaskRowProps {
    *  wrapper so the drag layer can read the visible list back off the DOM
    *  (`lib/visibleRows.ts`). */
   domAttrs?: Record<string, string>;
+  /** Which project the task came from, for a list that spans projects (§13.1).
+   *  Drawn as the project's colour dot plus its name in the row's meta line —
+   *  the same dot the rail shows beside the project. Left off inside a project
+   *  view, where every row answers the same question, and on subtasks: a branch
+   *  belongs to its parent's project, so it is stated once at the root. */
+  project?: { name: string; color: string | null } | null;
 }
 
 /**
@@ -104,6 +110,7 @@ export default function TaskRow({
   index = 0,
   dataIndex,
   domAttrs,
+  project,
 }: TaskRowProps) {
   const [dueOpen, setDueOpen] = useState(false);
   const done = task.status === "done" || task.status === "cancelled";
@@ -297,8 +304,9 @@ export default function TaskRow({
           </div>
         )}
 
-        {(dueAt != null || task.subtask_total > 0) && (
+        {(project || dueAt != null || task.subtask_total > 0) && (
           <div className="mt-0.5 flex items-center gap-3 text-meta leading-none">
+            {project && <ProjectChip project={project} />}
             {dueAt != null && dueChip}
             {task.subtask_total > 0 && (
               <SubtaskProgress done={task.subtask_done} total={task.subtask_total} />
@@ -354,6 +362,31 @@ export default function TaskRow({
         </Dropdown>
       </span>
     </li>
+  );
+}
+
+/**
+ * Which project a row belongs to (DESIGN §13.1), for the views that cut across
+ * projects — Inbox, Today, a tag, search.
+ *
+ * The dot carries the project's colour, the same one the rail shows and the
+ * calendar block is drawn in, so a list of mixed projects reads by colour first
+ * and by name second. Quiet: tertiary ink, no chip background, sits in the meta
+ * line beside the date. A project with no colour yet keeps the neutral hairline
+ * dot rather than inventing one.
+ */
+function ProjectChip({ project }: { project: { name: string; color: string | null } }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1" style={{ color: "var(--text-tertiary)" }}>
+      <span
+        className="size-2 shrink-0 rounded-full"
+        style={{ background: project.color ?? "var(--border-hairline)" }}
+        aria-hidden="true"
+      />
+      <span className="truncate" style={{ maxWidth: "12em" }} title={project.name}>
+        {project.name}
+      </span>
+    </span>
   );
 }
 

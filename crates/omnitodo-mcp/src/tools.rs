@@ -129,8 +129,8 @@ fn describe(name: &str) -> (&'static str, Value) {
             json!({"type":"object","properties":{"days":{"type":"integer"},"from":{"type":"integer","description":"Window start, unix ms"},"to":{"type":"integer","description":"Window end, unix ms"}}}),
         ),
         "list_calendar" => (
-            "Calendar items (materialised tasks + virtual occurrences) in a window. Returns {items}",
-            json!({"type":"object","properties":{"from":{"type":"integer"},"to":{"type":"integer"},"days":{"type":"integer"}}}),
+            "Calendar items (materialised tasks + virtual occurrences) in a window. Finished work is not listed: only open tasks appear. Returns {items}",
+            json!({"type":"object","properties":{"from":{"type":"integer"},"to":{"type":"integer"},"days":{"type":"integer"},"project_id":{"type":"string","description":"Narrow the window to one project"}}}),
         ),
         "export_tasks" => (
             "Serialize tasks (json|csv|markdown) without writing to disk. Same filters and default (open tasks only) as list_tasks. Returns {format,data}",

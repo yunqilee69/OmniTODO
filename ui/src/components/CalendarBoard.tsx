@@ -18,9 +18,12 @@ import {
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { api, type CalendarItemDto, type Id, type TaskPatch } from "../api/client";
 import { qk } from "../api/queryKeys";
+import { useProjectIndex } from "../hooks/useProjectIndex";
 import { groupByDay, quickAddSeedForDay, reschedulePatch } from "../lib/calendar";
 import { addDays, dayKey, formatDue, monthGrid, weekWindow } from "../lib/dates";
+import { withAlpha } from "../lib/projectColors";
 import { useUiStore } from "../stores/ui";
+import SidebarToggle from "./SidebarToggle";
 
 type Mode = "month" | "week";
 
@@ -33,6 +36,9 @@ interface DragData {
   start_at: number | null;
   due_at: number | null;
   all_day: boolean;
+  /** The project's colour, so the block being dragged looks like the one it
+   *  left behind. Carried for the overlay only — `reschedulePatch` ignores it. */
+  projectColor: string | null;
 }
 
 /** Prefer the cell under the pointer; overlap is the fallback (keyboard drags). */
@@ -94,15 +100,27 @@ function DayCell({
   );
 }
 
-/** A calendar item. Materialised occurrences are draggable; virtual ones read-only. */
+/** A calendar item. Materialised occurrences are draggable; virtual ones read-only.
+ *
+ *  When the calendar spans projects, each block is drawn in its project's colour
+ *  — a solid bar on the leading edge plus a wash of the same hue behind it — so
+ *  two projects' work can be told apart at a glance. A block whose task has no
+ *  project (or whose project has no colour yet) keeps the accent styling, which
+ *  is also what the single-project calendar shows. */
 function OccurrenceTag({
   item,
   dragId,
   onOpen,
+  projectColor,
+  projectName,
 }: {
   item: CalendarItemDto;
   dragId: string;
   onOpen: (id: string) => void;
+  /** The project's colour, whenever the block should be drawn in one. */
+  projectColor?: string | null;
+  /** Named in the tooltip: only worth saying where the calendar spans projects. */
+  projectName?: string;
 }) {
   const draggable = !item.virtual_occurrence && Boolean(item.task_id);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -116,14 +134,20 @@ function OccurrenceTag({
             start_at: item.start_at,
             due_at: item.due_at,
             all_day: item.all_day,
+            projectColor: projectColor ?? null,
           }
         : undefined,
   });
+  const color = projectColor ?? null;
 
   return (
     <li ref={setNodeRef} style={{ opacity: isDragging ? 0.35 : undefined }}>
       <Tooltip
-        title={item.virtual_occurrence ? "重复期次（虚拟，只读）" : "拖动可改期，点击打开详情"}
+        title={
+          item.virtual_occurrence
+            ? "重复期次（虚拟，只读）"
+            : `拖动可改期，点击打开详情${projectName ? ` · ${projectName}` : ""}`
+        }
       >
         <Tag
           {...(draggable ? { ...attributes, ...listeners } : {})}
@@ -141,14 +165,16 @@ function OccurrenceTag({
             cursor: draggable ? "grab" : "default",
             ...(item.virtual_occurrence
               ? {
-                  background: "transparent",
+                  background: color ? withAlpha(color, 0.08) : "transparent",
                   border: "1px dashed var(--text-tertiary)",
+                  borderInlineStart: color ? `3px solid ${withAlpha(color, 0.55)}` : undefined,
                   color: "var(--text-tertiary)",
                 }
               : {
-                  background: "var(--accent-soft)",
-                  color: "var(--accent-ink)",
+                  background: color ? withAlpha(color, 0.16) : "var(--accent-soft)",
+                  color: color ? "var(--text-primary)" : "var(--accent-ink)",
                   border: "none",
+                  borderInlineStart: color ? `3px solid ${color}` : undefined,
                 }),
           }}
         >
@@ -174,7 +200,12 @@ function OccurrenceTag({
  * drag events, and dnd-kit's pointer sensor works everywhere the task list does.
  *
  * `projectId` narrows the window to one project, which is what the project view's
- * calendar mode asks for; the standalone `/calendar` route reads every project.
+ * calendar mode asks for; the standalone `/calendar` route reads every project
+ * and paints each block in its project's colour — the whole reason a project
+ * carries one.
+ *
+ * Only open work is drawn: the core leaves finished tasks out of the window
+ * (`Core::calendar`), so there is nothing here to dim or strike through.
  */
 export default function CalendarBoard({
   projectId,
@@ -184,6 +215,7 @@ export default function CalendarBoard({
   /** Drop the outer page padding, so the grid fills a host view's content box. */
   embedded?: boolean;
 }) {
+  const projects = useProjectIndex();
   const [mode, setMode] = useState<Mode>("month");
   const [cursor, setCursor] = useState(() => Date.now());
   const [active, setActive] = useState<DragData | null>(null);
@@ -286,6 +318,10 @@ export default function CalendarBoard({
   return (
     <div className={`flex h-full min-h-0 flex-col ${embedded ? "" : "px-6 py-4"}`}>
       <header className="flex flex-wrap items-center gap-2 pb-3">
+        {/* The standalone calendar carries its own header instead of a
+            `PageHeader`, so the rail's expand button is repeated here; the
+            embedded one is already under its project view's header. */}
+        {!embedded && <SidebarToggle variant="expand" />}
         <Typography.Title level={5} style={{ margin: 0 }}>
           {title}
         </Typography.Title>
@@ -343,6 +379,10 @@ export default function CalendarBoard({
                       item={it}
                       dragId={it.task_id ?? `v:${it.series_id}:${it.due_at}`}
                       onOpen={openTask}
+                      projectColor={it.project_id ? projects.get(it.project_id)?.color : null}
+                      projectName={
+                        embedded ? undefined : projects.get(it.project_id ?? "")?.name
+                      }
                     />
                   ))}
                 </DayCell>
@@ -354,9 +394,16 @@ export default function CalendarBoard({
               <span
                 className="cursor-grabbing rounded border px-1.5 py-0.5 text-[12px] shadow-lg"
                 style={{
-                  background: "var(--bg-surface)",
-                  borderColor: "var(--accent)",
-                  color: "var(--accent-ink)",
+                  // Matches the block under the pointer, colour included: the
+                  // overlay is the block, lifted off the grid.
+                  background: active.projectColor
+                    ? withAlpha(active.projectColor, 0.16)
+                    : "var(--bg-surface)",
+                  borderColor: active.projectColor ?? "var(--accent)",
+                  borderInlineStart: active.projectColor
+                    ? `3px solid ${active.projectColor}`
+                    : undefined,
+                  color: active.projectColor ? "var(--text-primary)" : "var(--accent-ink)",
                 }}
               >
                 {active.title}

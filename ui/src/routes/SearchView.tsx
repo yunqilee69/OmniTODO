@@ -53,6 +53,7 @@ export default function SearchView() {
               query={{ key: qk.search(term, filter), fn: () => api.search(term, filter) }}
               onOpenTask={selectTask}
               emptyHint={`没有匹配「${term}」的任务`}
+              showProject
             />
           ) : (
             <Typography.Text type="secondary" className="text-xs">

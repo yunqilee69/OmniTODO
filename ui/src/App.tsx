@@ -16,6 +16,7 @@ import { TaskDndProvider } from "./components/DndProvider";
 import NavMenu from "./components/NavMenu";
 import QuickAddPanel from "./components/QuickAddPanel";
 import ReminderToasts from "./components/ReminderToasts";
+import SidebarToggle from "./components/SidebarToggle";
 import TaskDetail from "./components/TaskDetail";
 import { applyTheme, isTheme, persistTheme, subscribeSystemTheme, useResolvedTheme } from "./lib/theme";
 import Calendar from "./routes/Calendar";
@@ -27,6 +28,9 @@ import TaskListView from "./routes/TaskList";
 import { buildAntdTheme } from "./theme/antd";
 import { useUiStore } from "./stores/ui";
 
+/** Rail width, shared by the sider and the fixed-width body it slides over. */
+const RAIL_WIDTH = 264;
+
 /** App shell (design §13): one `DndContext` wraps the sidebar and the main pane
  *  so a task can be dragged from a list onto a project. antd's `ConfigProvider`
  *  carries the DESIGN.md token palette; the detail panel is a centred modal. */
@@ -36,6 +40,7 @@ export default function App() {
   const selectTask = useUiStore((s) => s.selectTask);
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
+  const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const openQuickAdd = useUiStore((s) => s.openQuickAdd);
   const navigate = useNavigate();
   const location = useLocation();
@@ -115,17 +120,38 @@ export default function App() {
         <TaskDndProvider>
           <Layout className="app-grain h-screen">
             <Layout.Sider
+              id="app-sidebar"
               theme="light"
-              width={264}
-              style={{ borderInlineEnd: "1px solid var(--border-hairline)" }}
+              width={RAIL_WIDTH}
+              collapsedWidth={0}
+              collapsed={sidebarCollapsed}
+              collapsible
+              // The rail's own trigger is suppressed: collapsing is done by the
+              // button in the wordmark row, expanding by the one in the view
+              // header (SidebarToggle), so neither action sits on a hairline
+              // edge where it would be hard to hit or to find.
+              trigger={null}
+              style={{
+                // Clipping rather than reflowing: the body inside keeps its
+                // full width while the rail animates over it, so labels slide
+                // out of sight instead of rewrapping on every frame.
+                overflow: "hidden",
+                borderInlineEnd: sidebarCollapsed ? "none" : "1px solid var(--border-hairline)",
+              }}
             >
-              <div className="flex h-full flex-col gap-3 px-3 pb-3 pt-4">
+              <div
+                className="flex h-full flex-col gap-3 px-3 pb-3 pt-4"
+                style={{ width: RAIL_WIDTH }}
+              >
                 <div className="flex items-center gap-2 px-1">
                   <span className="grid size-6 shrink-0 place-items-center rounded-[7px] bg-[var(--accent)] text-white">
                     <ThunderboltOutlined />
                   </span>
                   <span className="font-display text-[17px] font-semibold tracking-tight">
                     OmniTODO
+                  </span>
+                  <span className="ml-auto">
+                    <SidebarToggle variant="collapse" />
                   </span>
                 </div>
                 <Button type="primary" block icon={<PlusOutlined />} onClick={() => openQuickAdd()}>

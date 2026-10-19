@@ -239,6 +239,9 @@ export interface McpStatus {
 export interface CalendarItemDto {
   task_id: Id | null;
   series_id: Id | null;
+  /** The project the item belongs to; a calendar spanning projects draws each
+   *  block in that project's colour. */
+  project_id: Id | null;
   title: string;
   start_at: number | null;
   due_at: number | null;

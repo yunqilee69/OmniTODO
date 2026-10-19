@@ -26,6 +26,9 @@ pub struct OccurrenceDto {
 pub struct CalendarItemDto {
     pub task_id: Option<Id>,
     pub series_id: Option<Id>,
+    /// The project the item belongs to, so a calendar spanning projects can
+    /// colour each block by its project instead of asking per item.
+    pub project_id: Option<Id>,
     pub title: String,
     pub start_at: Option<i64>,
     pub due_at: Option<i64>,
@@ -105,6 +108,11 @@ impl Core {
     /// Everything the calendar shows in `[from, to]`: tasks whose start/due falls
     /// in the window, plus virtual occurrences of recurring series.
     ///
+    /// Open work only: a finished task stops being a thing you look at on a
+    /// calendar, so `done` and `cancelled` rows are filtered out here rather than
+    /// being drawn and dimmed. The future occurrences of a recurring task still
+    /// show even once the first one is ticked off — those are not done yet.
+    ///
     /// `project_id` narrows the window to one project — what the project view's
     /// calendar mode asks for. The narrowing happens in SQL rather than in the
     /// caller because the task read is capped: filtering a capped page afterwards
@@ -119,7 +127,7 @@ impl Core {
         let page = self
             .list_tasks(&TaskFilter {
                 sort: Sort::DueAsc,
-                include_completed: true,
+                include_completed: false,
                 limit: Some(1000),
                 project_ids: project_id.map(|p| vec![p.to_string()]),
                 ..Default::default()
@@ -138,6 +146,7 @@ impl Core {
             .map(|t| CalendarItemDto {
                 task_id: Some(t.id),
                 series_id: t.series_id,
+                project_id: t.project_id,
                 title: t.title,
                 start_at: t.start_at,
                 due_at: t.due_at,
@@ -151,11 +160,14 @@ impl Core {
         // is a separate statement rather than a bound `IS ?`: an unfiled task has a
         // NULL project, so `project_id IS NULL` would drop every real project's
         // series out of the global calendar.
-        let anchors: Vec<(String,)> = match project_id {
+        //
+        // Anchors are read regardless of status: the anchor row is one occurrence
+        // of the series, and finishing that occurrence does not finish the series.
+        let anchors: Vec<(String, Option<String>)> = match project_id {
             Some(pid) => {
                 sqlx::query_as(
-                    "SELECT id FROM tasks WHERE series_id = id AND recurrence_rule IS NOT NULL \
-                     AND deleted_at IS NULL AND project_id = ?",
+                    "SELECT id, project_id FROM tasks WHERE series_id = id \
+                     AND recurrence_rule IS NOT NULL AND deleted_at IS NULL AND project_id = ?",
                 )
                 .bind(pid)
                 .fetch_all(&self.pool)
@@ -163,21 +175,24 @@ impl Core {
             }
             None => {
                 sqlx::query_as(
-                    "SELECT id FROM tasks WHERE series_id = id AND recurrence_rule IS NOT NULL \
-                     AND deleted_at IS NULL",
+                    "SELECT id, project_id FROM tasks WHERE series_id = id \
+                     AND recurrence_rule IS NOT NULL AND deleted_at IS NULL",
                 )
                 .fetch_all(&self.pool)
                 .await?
             }
         };
-        for (series_id,) in anchors {
+        for (series_id, anchor_project) in anchors {
             for occ in self.expand_series(&series_id, from, to).await? {
+                // A materialised occurrence is already in `items` (or was left out
+                // because it is done) — only the not-yet-materialised ones are added.
                 if occ.materialized {
                     continue;
                 }
                 items.push(CalendarItemDto {
                     task_id: None,
                     series_id: Some(occ.series_id.clone()),
+                    project_id: anchor_project.clone(),
                     title: occ.title,
                     start_at: Some(occ.occurrence_at),
                     due_at: Some(occ.occurrence_at),
